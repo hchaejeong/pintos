@@ -28,6 +28,10 @@
    that are ready to run but not actually running. */
 static struct list ready_list;
 
+// sleep_list 추가
+// THREAD_BLOCK state에 있는 process list
+static struct list sleep_list;
+
 /* Idle thread. */
 static struct thread *idle_thread;
 
@@ -108,11 +112,16 @@ thread_init (void) {
 	/* Init the globla thread context */
 	lock_init (&tid_lock);
 	list_init (&ready_list);
+	list_init (&sleep_list); // sleep_list initalization
+	// init을 하면 empty list가 만들어지는 거니까,
+	// 우리가 sleep_list에 add해주는 상황에서만 wake_up_time에 맞춰서 추가해주면 됨
 	list_init (&destruction_req);
 
 	/* Set up a thread structure for the running thread. */
 	initial_thread = running_thread ();
 	init_thread (initial_thread, "main", PRI_DEFAULT);
+
+	//wakeup_tick attribute를 초기화 해줘야하나...?
 	initial_thread->status = THREAD_RUNNING;
 	initial_thread->tid = allocate_tid ();
 }
@@ -306,6 +315,131 @@ thread_yield (void) {
 		list_push_back (&ready_list, &curr->elem);
 	do_schedule (THREAD_READY);
 	intr_set_level (old_level);
+}
+
+// thread_yield와 비슷하게 thread_sleep을 만들자.
+// ready_list 대신에 sleep_list에 넣고, BLOCK 상태로만 만들면 된다.
+void
+thread_sleep(int64_t wake_up_time) {
+	// 여기서, idle thread는 BLOCK을 하면 안됨
+	// disable interrupt를 한 상황에서
+	// sleep_list에 이 thread를 포함시키고,
+	// thread의 state를 BLOCKED로 만들고
+	// wake_up_time을 이 thread에 store하고,
+	// 필요시 global_tick을 update하고,
+	// schedule()을 부른다
+	// enable interrupt를 한다
+	
+	//bool go = true;
+	struct thread *current = thread_current();
+	enum intr_level old_level;
+	//struct list_elem *tmp;
+	//disable interrupt하고 그 전 interrupt state를 반환
+
+	ASSERT (!intr_context ());
+	
+	old_level = intr_disable();
+
+	if (current != idle_thread) {
+		// &sleep_list를 next로 쭉쭉 돌리면서
+		// (list_begin() 함수로 sleep_list의 begin을 갖고오고)
+		// (list_next() 함수로 sleep_list를 하나하나 순서대로 둘러봄)
+		// wake_up_time이랑 sleep_list안의 thread의 wake_up_time을 비교해서
+		// wake_up_time보다 크거나 같으면 그 thread를 반환
+		// 그러면, list_insert() 함수를 이용해서 삽입.
+		current->wakeup_tick = wake_up_time; // wakeup_tick 설정
+
+		// 먼저, sleep_list가 비었는지 확인
+		if (list_empty(&sleep_list)) {
+			list_push_back(&sleep_list, &current->elem);
+		} else {
+			struct list_elem *tmp;
+			// Hㅏ... list.h에 친절하게 for문 쓰는 방법 설명해둔걸
+			// 왜 이제서야 읽었을까!!!!! 으악이렇게 간단해질수가!!!!!
+			// 계속 list_next()의 ASSERT에서 걸렸었는데!!!!
+			for (tmp = list_begin (&sleep_list); tmp != list_end (&sleep_list); tmp = list_next (tmp)) {
+				struct thread *t = list_entry (tmp, struct thread, elem);
+				if (t->wakeup_tick >= wake_up_time) {
+					// wake_up_time보다 크거나 같은 wakeup_tick을 가진 elem을 반환
+					break;
+				}
+			}
+
+			// ASSERT (list_begin(&sleep_list) != NULL);
+			// ASSERT (list_begin(&sleep_list) != list_tail(&sleep_list));
+			// tmp = list_begin(&sleep_list);
+			// while (go) {
+			// 	if (tmp == list_tail(&sleep_list)) {
+			// 		go = false;
+			// 		break;
+			// 	} else if (list_entry(tmp, struct thread, elem)->wakeup_tick >= wake_up_time) {
+			// 		// wake_up_time보다 크거나 같은 wakeup_tick을 가진 elem을 반환
+			// 		go = false;
+			// 		break;
+			// 	} else {
+			// 		ASSERT (tmp != NULL);
+			// 		ASSERT (tmp != list_tail(&sleep_list));
+			// 		tmp = list_next(tmp);
+			// 	}
+			// }
+
+			if (tmp == list_begin(&sleep_list)) {
+				list_push_front(&sleep_list, &current->elem);
+			} else if (tmp == list_tail(&sleep_list)) {
+				list_push_back(&sleep_list, &current->elem);
+			} else {
+				list_insert(tmp, &current->elem);
+			}
+		}
+		//list_push_back (&sleep_list, &current->elem);	//이 부분을 wakeup_tick이 작은순으로 넣기
+		thread_block();
+	}
+	//do_schedule (THREAD_READY);
+	//current->wakeup_tick = wake_up_time; // wakeup_tick 설정
+
+	//do_schedule (THREAD_BLOCKED);
+	intr_set_level (old_level);
+}
+
+//timer interrupt에서 thread를 wake up 시키는 함수
+void
+thread_wakeup(int64_t wake_up_tick) {
+	//sleep list의 element들을 하나씩 체크해서 wake_up_tick보다 thread의 wakeup_tick이 작으면 ready list로 옮겨줘야함
+	//sleep list를 wakeup_time이 작은 순서대로 정렬을 했기 때문에 wake_up_tick보다 큰 element을 도달하면 나머지 element들을 확인 안해도됨.
+	
+	struct list_elem *sleep_elem = list_begin(&sleep_list);
+	struct thread *current = thread_current();
+
+	struct list_elem *e;
+	for (e = list_begin (&sleep_list); e != list_end (&sleep_list); e = list_next (e)) {
+    	struct thread *t = list_entry (e, struct thread, elem);
+    	if (t->wakeup_tick <= wake_up_tick) {
+			sleep_elem = list_remove(sleep_elem);
+			thread_unblock(t);
+		} else {
+			break; // 시간이 더 커지면 더이상 볼 필요가 엇음
+		}
+	}
+
+	// while (sleep_elem != list_end(&sleep_list)) {
+	// 	//지금 sleep list에서 받은 부분의 thread를 불러와서 그 local wakeup_tick이랑 비교해야함
+	// 	struct thread *thread_elem = list_entry(sleep_elem, struct thread, elem);
+	// 	if (thread_elem->wakeup_tick < wake_up_tick) {
+	// 		sleep_elem = list_remove(sleep_elem);		//sleep list에서 제거
+	// 		//list_push_back (&ready_list, &current->elem); thread_unblock에서 실행해줌.
+	// 		thread_unblock(thread_elem);
+
+	// 		ASSERT (sleep_elem != NULL);
+	// 		ASSERT (sleep_elem != list_tail(&sleep_list));
+	// 		sleep_elem = list_next(sleep_elem);	//다음꺼를 또 체크하기
+	// 	} else if (sleep_elem == list_tail(&sleep_list)) {
+	// 		break;
+	// 	} else {
+	// 		break;
+	// 	}
+	// }
+
+	//update the global tick?????? 이 부분이 뭔지 모르겠음.
 }
 
 /* Sets the current thread's priority to NEW_PRIORITY. */

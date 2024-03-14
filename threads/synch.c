@@ -59,6 +59,11 @@ sema_init (struct semaphore *sema, unsigned value) {
    sema_down function. */
 void
 sema_down (struct semaphore *sema) {
+
+	// 내가 공유자원 사용하겠다고 요청하고, 만약 쓸 수 있으면 쓰는 상태로 바꿔야 하는 것
+	// 근데 내가 공유자원 쓸 수가 없으면, 당연히 waiter 명단에 들어가야함
+	// 지금 원래 상태는 list_push_back을 쓴 걸로 봐서 그냥 뒤에다가 넣는듯
+	// 근데 우리는 priority로 순서 정해야하니까 그냥 그거만 바꾸면 될듯
 	enum intr_level old_level;
 
 	ASSERT (sema != NULL);
@@ -66,7 +71,9 @@ sema_down (struct semaphore *sema) {
 
 	old_level = intr_disable ();
 	while (sema->value == 0) {
-		list_push_back (&sema->waiters, &thread_current ()->elem);
+		//list_push_back (&sema->waiters, &thread_current ()->elem);
+		// 채정이가 만든 priority 비교 함수 쓰면 됨. 기작은 같으니까
+		list_insert_ordered(&sema->waiters,  &thread_current ()->elem, compare_priority_func, 0);
 		thread_block ();
 	}
 	sema->value--;
@@ -104,6 +111,10 @@ sema_try_down (struct semaphore *sema) {
    This function may be called from an interrupt handler. */
 void
 sema_up (struct semaphore *sema) {
+	// 여기서는 waiters list를 sort해야한다.
+	// 그리고, up 했으니까 lock이 풀린거잖아? 이 순간에도 CPU에 누가 들어갈지 잘 봐야하므로
+	// 일단 먼저 ready list 안에 있는 애들 중에 priority가 더 높으면 걔가 running 되어야한다는 걸 잊지말자
+
 	enum intr_level old_level;
 
 	ASSERT (sema != NULL);
