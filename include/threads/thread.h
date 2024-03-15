@@ -136,6 +136,11 @@ const char *thread_name (void);
 void thread_exit (void) NO_RETURN;
 void thread_yield (void);
 
+//compare_priority_thread 함수 추가
+bool compare_priority_thread(const struct list_elem *a,
+                             const struct list_elem *b,
+                             void *aux);
+
 // 전체 함수 선언에도 우리가 만든 함수를 추가해줘야 함
 void thread_sleep(int64_t);
 void thread_wakeup(int64_t);
