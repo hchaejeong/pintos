@@ -250,6 +250,8 @@ thread_unblock (struct thread *t) {
 	old_level = intr_disable ();
 	ASSERT (t->status == THREAD_BLOCKED);
 	list_push_back (&ready_list, &t->elem);
+	// push_back 말고 list_inserted_ordered로 ready_list에다가 넣어야 됨
+	//list_insert_ordered(&ready_list, &t->elem, compare_priority_func, NULL);
 	t->status = THREAD_READY;
 	intr_set_level (old_level);
 }
@@ -331,7 +333,7 @@ thread_sleep(int64_t wake_up_time) {
 	// enable interrupt를 한다
 	
 	//bool go = true;
-	struct thread *current = thread_current();
+	struct thread *current;
 	enum intr_level old_level;
 	//struct list_elem *tmp;
 	//disable interrupt하고 그 전 interrupt state를 반환
@@ -339,6 +341,7 @@ thread_sleep(int64_t wake_up_time) {
 	ASSERT (!intr_context ());
 	
 	old_level = intr_disable();
+	current = thread_current();
 
 	if (current != idle_thread) {
 		// &sleep_list를 next로 쭉쭉 돌리면서
@@ -348,7 +351,9 @@ thread_sleep(int64_t wake_up_time) {
 		// wake_up_time보다 크거나 같으면 그 thread를 반환
 		// 그러면, list_insert() 함수를 이용해서 삽입.
 		current->wakeup_tick = wake_up_time; // wakeup_tick 설정
-
+		// if (wake_up_time > timer_ticks()) {
+		// 	wake_up_time = timer_ticks();
+		// }
 		// 먼저, sleep_list가 비었는지 확인
 		if (list_empty(&sleep_list)) {
 			list_push_back(&sleep_list, &current->elem);
@@ -404,22 +409,61 @@ thread_sleep(int64_t wake_up_time) {
 //timer interrupt에서 thread를 wake up 시키는 함수
 void
 thread_wakeup(int64_t wake_up_tick) {
-	//sleep list의 element들을 하나씩 체크해서 wake_up_tick보다 thread의 wakeup_tick이 작으면 ready list로 옮겨줘야함
-	//sleep list를 wakeup_time이 작은 순서대로 정렬을 했기 때문에 wake_up_tick보다 큰 element을 도달하면 나머지 element들을 확인 안해도됨.
+	/*
+	sleep list의 element들을 하나씩 체크해서 wake_up_tick보다 thread의 wakeup_tick이 작으면 ready list로 옮겨줘야함
+	sleep list를 wakeup_time이 작은 순서대로 정렬을 했기 때문에 wake_up_tick보다 큰 element을 도달하면 나머지 element들을 확인 안해도됨.
 	
 	struct list_elem *sleep_elem = list_begin(&sleep_list);
 	struct thread *current = thread_current();
 
-	struct list_elem *e;
-	for (e = list_begin (&sleep_list); e != list_end (&sleep_list); e = list_next (e)) {
-    	struct thread *t = list_entry (e, struct thread, elem);
-    	if (t->wakeup_tick <= wake_up_tick) {
+	ASSERT(!list_empty(&sleep_list));
+	
+	struct list_elem *sleep_elem;
+	for (sleep_elem = list_begin (&sleep_list); sleep_elem != list_end (&sleep_list); sleep_elem = list_next(sleep_elem)) {
+		struct thread *t = list_entry (sleep_elem, struct thread, elem);
+		//if (t->wakeup_tick <= timer_ticks()) {
+		if (t->wakeup_tick <= wake_up_tick) {
 			sleep_elem = list_remove(sleep_elem);
 			thread_unblock(t);
+			if (sleep_elem == list_end(&sleep_list)) {
+				break;
+			}
 		} else {
 			break; // 시간이 더 커지면 더이상 볼 필요가 엇음
 		}
 	}
+	지금 위에 적어둔 것들이 계속 woke up * ticks later의 *에 들어가는 숫자들이 잘못되어져서 나온다.
+	0과 10만 나와야 하는데 계속 1과 9만 나온다고 해야할까... 이게 global tick의 문제인지
+	아니면 일어나는 타이밍이 이상한건지 그걸 진짜 모르겠다.
+	그래서 그냥 반복문 형태를 바꿔보기로 했다. 어차피 끝까지 돌아야 할 필요가 없으니까
+	for loop 대신에 걍 while문 쓰고 계속 조건문을 통해서 break 하는 걸로 써보았다
+	*/
+
+	// 아니 그랬더니 성공했다 대체 뭐가 문제였던거지???? 아니 내가 위에서 뭘잘못했는뎁쇼
+	struct list_elem *sleep_elem = list_begin(&sleep_list);
+	while (sleep_elem != list_end(&sleep_list)) {
+		struct thread *t = list_entry (sleep_elem, struct thread, elem);
+		if (t->wakeup_tick > wake_up_tick) {
+			// thread에 저장된 wake up tick보다 global tick이 더 작으면
+			// 깨울 필요가 없고, 우리는 wake up tick 순서대로 sleep list에 넣어뒀으니
+			// 어차피 커지는 순간 뒤를 볼 필요가 없다. 따라서 break
+			break;
+		} else {
+			// 크지 않으면 그냥 다 빼내야 한다.
+			sleep_elem = list_remove (sleep_elem);
+			thread_unblock(t);
+			if (sleep_elem != list_end(&sleep_list)) {
+				// 만약 sleep_list에서 빼낸 에가 list의 마지막 애였다면?
+				// 그러면 sleep_list를 다 본 거니까 break해야겠지!
+				// 그게 아니라면 next로 넘기고.
+				list_next(sleep_elem);
+			} else {
+				break;
+			}
+		}
+		
+	}
+	
 
 	// while (sleep_elem != list_end(&sleep_list)) {
 	// 	//지금 sleep list에서 받은 부분의 thread를 불러와서 그 local wakeup_tick이랑 비교해야함
