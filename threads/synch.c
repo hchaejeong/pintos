@@ -64,6 +64,10 @@ sema_down (struct semaphore *sema) {
 	// 근데 내가 공유자원 쓸 수가 없으면, 당연히 waiter 명단에 들어가야함
 	// 지금 원래 상태는 list_push_back을 쓴 걸로 봐서 그냥 뒤에다가 넣는듯
 	// 근데 우리는 priority로 순서 정해야하니까 그냥 그거만 바꾸면 될듯
+
+	// 나 진짜 이거 checkout 돌려버려서 다 날아간게 진짜 너무 빡쳐 화나
+	// 진짜 미치겠어 그저께 해서 하....복기를 할수있으려나 진짜 미치겠네
+
 	enum intr_level old_level;
 
 	ASSERT (sema != NULL);
@@ -71,14 +75,16 @@ sema_down (struct semaphore *sema) {
 
 	old_level = intr_disable ();
 	while (sema->value == 0) {
-		list_push_back (&sema->waiters, &thread_current ()->elem);
+		// list_push_back (&sema->waiters, &thread_current ()->elem);
 		// 채정이가 만든 priority 비교 함수 쓰면 됨. 기작은 같으니까
-		//list_insert_ordered(&sema->waiters,  &thread_current ()->elem, compare_priority_func, 0);
+		list_insert_ordered(&sema->waiters,  &thread_current ()->elem, compare_priority_func, 0);
 		thread_block ();
 	}
 	sema->value--;
 	intr_set_level (old_level);
 }
+
+// github 잘 올라가는지 확인
 
 /* Down or "P" operation on a semaphore, but only if the
    semaphore is not already 0.  Returns true if the semaphore is
@@ -115,15 +121,30 @@ sema_up (struct semaphore *sema) {
 	// 그리고, up 했으니까 lock이 풀린거잖아? 이 순간에도 CPU에 누가 들어갈지 잘 봐야하므로
 	// 일단 먼저 ready list 안에 있는 애들 중에 priority가 더 높으면 걔가 running 되어야한다는 걸 잊지말자
 
+	// 이게 문제야 이걸 많이 바꿨는데 이게 다날아갔으면 진짜 미치겠네 하
+
+
 	enum intr_level old_level;
 
 	ASSERT (sema != NULL);
 
 	old_level = intr_disable ();
-	if (!list_empty (&sema->waiters))
-		thread_unblock (list_entry (list_pop_front (&sema->waiters),
-					struct thread, elem));
+	if (!list_empty (&sema->waiters)) {
+		// thread_unblock (list_entry (list_pop_front (&sema->waiters), struct thread, elem));
+		// 하.. 그때 어떻게 했더라 일단은 혹시 모르니까 다시 sort 한 다음에...
+		list_sort(&sema->waiters, compare_priority_func, NULL);
+		// 그다음에 어차피 unblock 하는건 똑같음. 그래야 waiter 명단에서 나오는 거니까.
+		// 그런데 이 상황에서, ready_list 중에 priority가 더 높으면 걔가 running 되어야함.
+		// 내가 thread.c에 함수 만들어놨으니까 ㅇㅇ 그거 쓰면 될듯
+		thread_unblock (list_entry (list_pop_front (&sema->waiters), struct thread, elem));
+	}
 	sema->value++;
+	if (check_ready_priority_is_high()) {
+		// 이건 ready list 애가 priority가 더 높은거니까 yield() 해야함
+		thread_yield();
+	}
+	// 하... 난 진짜 미친X야 대체 뭐라고 아무생각없이 checkout을 한거니진짜로
+	// 생각보다 코드가 간단했었기에 망정이지 이걸 엄청 짜고 난다음에 하면은 진짜 미친거아님?
 	intr_set_level (old_level);
 }
 
