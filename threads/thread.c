@@ -167,21 +167,21 @@ thread_tick (void) {
 	else
 		kernel_ticks++;
 
-	//advanced scheduler인 경우 각 thread의 load_avg, recent_cpu, priority를 1초마다 계산하고
-	//모든 thread의 priority는 매 4번의 틱마다 다다시 계산해줘야함.
-	if (thread_mlfqs) {
-		int64_t tick_num = timer_ticks();
-		//recent_cpu는 매 tick마다 올라감
-		increase_recent_cpu();
-		
-		if (tick_num % TIMER_FREQ == 0) {
-			load_avg = calculate_load_avg();
-			recalculate_recent_cpu();
+		//advanced scheduler인 경우 각 thread의 load_avg, recent_cpu, priority를 1초마다 계산하고
+		//모든 thread의 priority는 매 4번의 틱마다 다다시 계산해줘야함.
+		if (thread_mlfqs) {
+			int64_t tick_num = timer_ticks();
+			//recent_cpu는 매 tick마다 올라감
+			increase_recent_cpu();
+			
+			if (tick_num % TIMER_FREQ == 0) {
+				load_avg = calculate_load_avg();
+				recalculate_recent_cpu();
+			}
+			if (tick_num % 4 == 0) {
+				recalculate_priority();
+			}
 		}
-		if (tick_num % 4 == 0) {
-			recalculate_priority();
-		}
-	}
 
 	/* Enforce preemption. */
 	if (++thread_ticks >= TIME_SLICE)
@@ -605,7 +605,15 @@ thread_set_nice (int nice UNUSED) {
 	/* TODO: Your implementation goes here */
 	struct thread *current = thread_current();
 	current->nice = nice;
-	
+	int recalculated_priority = calculate_priority(current);
+	//ready list를 다시 정렬시켜야함.
+	list_sort(&ready_list, compare_priority_func, NULL);
+	enum intr_level old_level;
+	old_level = intr_disable ();
+	if (check_ready_priority_is_high()) {
+			thread_yield(); // ready list에 있는 애가 더 크면 thread_yield()하면 됨!
+	}
+	intr_set_level (old_level);
 }
 
 /* Returns the current thread's nice value. */
@@ -622,14 +630,22 @@ thread_get_load_avg (void) {
 	//updated exactly when the system tick counter reaches a multiple of a second
 	//timer_ticks () % TIMER_FREQ == 0 일때만 업데이트시킨다
 	//현재 시스템의 load_avg의 100배인 결과를 도출해야함 (rounded to nearest int)
-	return 0;
+	struct thread *current = thread_current();
+	int load_avg_100 = multiply_int_fp(load_avg, 100);
+	int rounded_load_avg_100 = convert_to_int_nearest(load_avg_100);
+
+	return rounded_load_avg_100;
 }
 
 /* Returns 100 times the current thread's recent_cpu value. */
 int
 thread_get_recent_cpu (void) {
 	/* TODO: Your implementation goes here */
-	return 0;
+	struct thread *current = thread_current();
+	int recent_cpu_100 = multiply_int_fp(current->recent_cpu, 100); 
+	int rounded_recent_cpu_100 = convert_to_int_nearest(recent_cpu_100);
+
+	return rounded_recent_cpu_100;
 }
 
 //priority = PRI_MAX - (recent_cpu / 4) - (nice * 2)
