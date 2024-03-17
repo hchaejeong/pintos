@@ -589,6 +589,7 @@ thread_set_priority (int new_priority) {
    //    }
    // }
 }
+}
 
 /* Returns the current thread's priority. */
 int
