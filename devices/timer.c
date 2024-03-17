@@ -127,6 +127,7 @@ timer_print_stats (void) {
 static void
 timer_interrupt (struct intr_frame *args UNUSED) {
 	ticks++;
+	//매 tick마다 이게 call되기 때문에 여기서 1초당 load_avg, recent_cpu를 recalculate해줘야함.
 	thread_tick ();
 
 	// 이제 여기서 sleep_list를 check함. wake_up_time이 지난 애들을 wake

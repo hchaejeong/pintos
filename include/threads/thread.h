@@ -28,6 +28,8 @@ typedef int tid_t;
 #define PRI_DEFAULT 31                  /* Default priority. */
 #define PRI_MAX 63                      /* Highest priority. */
 
+#define TIMER_FREQ 100		//몇개의 tick이 1초에 일어나는지
+
 /* A kernel thread or user process.
  *
  * Each thread structure is stored in its own 4 kB page.  The
@@ -91,6 +93,8 @@ struct thread {
 	enum thread_status status;          /* Thread state. */
 	char name[16];                      /* Name (for debugging purposes). */
 	int priority;                       /* Priority. */
+	int nice;							//nice value
+	int recent_cpu;						//cpu value
 
 	//각 thread의 local tick attribute을 저장해놔야함
 	int64_t wakeup_tick; 
@@ -152,6 +156,13 @@ int thread_get_nice (void);
 void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
+
+int calculate_priority(struct thread *);
+int calculate_recent_cpu(struct thread *);
+int calculate_load_avg(void);
+void increase_recent_cpu(void);
+void recalculate_recent_cpu(void);
+void recalculate_priority(void);
 
 void do_iret (struct intr_frame *tf);
 
