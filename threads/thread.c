@@ -293,6 +293,34 @@ thread_current (void) {
 	return t;
 }
 
+// synch.c에서 semaphore을 하다보니 현재 running되고있는 thread랑
+// ready list의 가장 앞에있는 thread랑 priority 비교해서 높은 애로 대체되는
+// 함수가 없길래 만들러 왔다
+// 일단 priority가 더 높은지 check하는 함수를 만들면 되지 않을까
+bool
+check_ready_priority_is_high(void) {
+	// ready_list의 thread와 running thread의 priority 비교
+	// true면 ready list의 prioirty가 더 높음
+	// false면 running priority가 더 높음
+	if (!list_empty(&ready_list)) {
+		// 일단 혹시모르니 한번더 sort하는게 좋지않을까 (보험)
+		list_sort(&ready_list, compare_priority_func, NULL);
+		// if (thread_current()->priority < next_thread_to_run()->priority) {
+			// -> 얘의 문제를 알아냈다. next_thread_to_run()을 쓰면 front에 있는 애가
+			// POP!!!이 된다. 즉 없어진다... 확인만 하는 용도인데 POP 되어버리면
+			// 엉뚱한 애가 되겠지 ㅜㅜㅜㅜㅜㅜ
+			// 아싸!!! 이거 해결하니까 priority-sema 풀렸다!!!
+		if (thread_current()->priority < list_entry(list_begin(&ready_list), struct thread, elem) -> priority) {
+			// 다음에 실행시킬애가 priority가 더 높으면 return true
+			return true;
+		} else {
+			return false;
+		}
+	} else {
+		return false; // ready list에 있는 애가 아무도 없으면 걍 돌아야지 뭐 어쩌겐
+	}
+}
+
 /* Returns the running thread's tid. */
 tid_t
 thread_tid (void) {
@@ -509,16 +537,23 @@ thread_set_priority (int new_priority) {
    //ready list의 priority를 다 살펴봐야함
    struct list_elem *ready_elem;
 
-   //sort ready_list in decreasing order of priority   //then take the first element of the ready_list 
-   list_sort(&ready_list, compare_priority_func, NULL);
-   
-   if (!list_empty(&ready_list)) {
-      struct list_elem *highest_priority = list_begin(ready_elem);
-      struct thread *ready_thread = list_entry(highest_priority, struct thread, elem);
-      if (ready_thread->priority > current->priority) {
-         thread_yield();
-      }
+   enum intr_level old_level;
+   old_level = intr_disable ();
+   if (check_ready_priority_is_high()) {
+		thread_yield(); // ready list에 있는 애가 더 크면 thread_yield()하면 됨!
    }
+   intr_set_level (old_level);
+
+//    //sort ready_list in decreasing order of priority   //then take the first element of the ready_list 
+//    list_sort(&ready_list, compare_priority_func, NULL);
+   
+//    if (!list_empty(&ready_list)) {
+//       struct list_elem *highest_priority = list_begin(&ready_list);
+//       struct thread *ready_thread = list_entry(highest_priority, struct thread, elem);
+//       if (ready_thread->priority > current->priority) {
+//          thread_yield();
+//       }
+//    }
 
    // for (ready_elem = list_begin(&ready_list); ready_elem != list_end(&ready_list); ready_elem = list_next(&ready_list)) {
    //    struct thread *ready_thread = list_entry(ready_elem, struct thread, elem);
