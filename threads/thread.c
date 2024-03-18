@@ -620,7 +620,16 @@ thread_set_nice (int nice UNUSED) {
 int
 thread_get_nice (void) {
 	/* TODO: Your implementation goes here */
-	return thread_current()->nice;
+	//nice를 반환할때 다른게 실행되면 nice값이 바뀔수도 있으니 synch entry/exit 코드를 써야함
+	//interrupt을 disable --> lock acquire 느낌으로 다른게 접근 불가하게 하고
+	//interrupt을 다시 enable --> lock release 느낌으로 다시 풀어줘서 다른 thread들도 접근가능하게 함.
+	struct thread *current = thread_current();
+	enum intr_level old_level;
+	old_level = intr_disable();
+	int nice_value = current->nice;
+	intr_set_level(old_level);
+
+	return nice_value;
 }
 
 /* Returns 100 times the system load average. */
@@ -631,8 +640,14 @@ thread_get_load_avg (void) {
 	//timer_ticks () % TIMER_FREQ == 0 일때만 업데이트시킨다
 	//현재 시스템의 load_avg의 100배인 결과를 도출해야함 (rounded to nearest int)
 	struct thread *current = thread_current();
+
+	//이것도 synchronization을 위해 entry/exit이 필요함
+	enum intr_level old_level;
+	old_level = intr_disable();
+
 	int load_avg_100 = multiply_int_fp(load_avg, 100);
 	int rounded_load_avg_100 = convert_to_int_nearest(load_avg_100);
+	intr_set_level(old_level);
 
 	return rounded_load_avg_100;
 }
@@ -642,8 +657,14 @@ int
 thread_get_recent_cpu (void) {
 	/* TODO: Your implementation goes here */
 	struct thread *current = thread_current();
+
+	//synchronization을 위해 다른 thread 접근 막아놓고 현재 thread의 recent_cpu를 반환
+	enum intr_level old_level;
+	old_level = intr_disable();
+
 	int recent_cpu_100 = multiply_int_fp(current->recent_cpu, 100); 
 	int rounded_recent_cpu_100 = convert_to_int_nearest(recent_cpu_100);
+	intr_set_level(old_level);
 
 	return rounded_recent_cpu_100;
 }
