@@ -127,7 +127,7 @@ thread_init (void) {
 	//nice랑 recent_cpu를 일단 0으로 초기화하기
 	initial_thread->nice = 0;
 	initial_thread->recent_cpu = 0;
-	//load_avg = 0;
+	load_avg = 0;
 
 	//wakeup_tick attribute를 초기화 해줘야하나...?
 	initial_thread->status = THREAD_RUNNING;
@@ -168,25 +168,29 @@ thread_tick (void) {
 	else
 		kernel_ticks++;
 
-		//advanced scheduler인 경우 각 thread의 load_avg, recent_cpu, priority를 1초마다 계산하고
-		//모든 thread의 priority는 매 4번의 틱마다 다다시 계산해줘야함.
-	if (thread_mlfqs) {
-		int64_t tick_num = timer_ticks();
-		//recent_cpu는 매 tick마다 올라감
-		increase_recent_cpu();
-		
-		if (tick_num % TIMER_FREQ == 0) {
-			load_avg = calculate_load_avg();
-			recalculate_recent_cpu();
-		}
-		if (tick_num % 4 == 0) {
-			recalculate_priority();
-		}
-	}
-
 	/* Enforce preemption. */
 	if (++thread_ticks >= TIME_SLICE)
 		intr_yield_on_return ();
+}
+
+//advanced scheduler인 경우 각 thread의 load_avg, recent_cpu, priority를 1초마다 계산하고
+//모든 thread의 priority는 매 4번의 틱마다 다다시 계산해줘야함.
+void
+thread_recalculations(void) {
+	if (!thread_mlfqs)
+		return;
+	
+	int64_t tick_num = timer_ticks();
+	//recent_cpu는 매 tick마다 1씩 올라감
+	increase_recent_cpu();
+	
+	if (tick_num % TIMER_FREQ == 0) {
+		load_avg = calculate_load_avg();
+		recalculate_recent_cpu();
+	}
+	if (tick_num % TIME_SLICE == 0) {
+		recalculate_priority();
+	}
 }
 
 /* Prints thread statistics. */
@@ -588,10 +592,7 @@ thread_set_priority (int new_priority) {
 int
 thread_get_priority (void) {
 	struct thread *current = thread_current();
-	enum intr_level old_level;
-	old_level = intr_disable();
 	int priority_value = current->priority;
-	intr_set_level(old_level);
 
 	return priority_value;
 }
@@ -603,11 +604,11 @@ void
 thread_set_nice (int new_nice UNUSED) {
 	/* TODO: Your implementation goes here */
 	struct thread *current = thread_current();
-	//enum intr_level old_level;
-	//old_level = intr_disable();
+	enum intr_level old_level;
+	old_level = intr_disable();
 
 	current->nice = new_nice;
-	printf("new nice: ", new_nice);
+	//printf("new nice: ", new_nice);
 	int recalculated_priority = calculate_priority(current);
 	current->priority = recalculated_priority;
 	
@@ -615,21 +616,15 @@ thread_set_nice (int new_nice UNUSED) {
 		thread_yield(); // ready list에 있는 애가 더 크면 thread_yield()하면 됨!
 	}
 
-	//intr_set_level(old_level);
+	intr_set_level(old_level);
 }
 
 /* Returns the current thread's nice value. */
 int
 thread_get_nice (void) {
 	/* TODO: Your implementation goes here */
-	//nice를 반환할때 다른게 실행되면 nice값이 바뀔수도 있으니 synch entry/exit 코드를 써야함
-	//interrupt을 disable --> lock acquire 느낌으로 다른게 접근 불가하게 하고
-	//interrupt을 다시 enable --> lock release 느낌으로 다시 풀어줘서 다른 thread들도 접근가능하게 함.
 	struct thread *current = thread_current();
-	enum intr_level old_level;
-	old_level = intr_disable();
 	int nice_value = current->nice;
-	intr_set_level(old_level);
 
 	return nice_value;
 }
@@ -641,15 +636,11 @@ thread_get_load_avg (void) {
 	//updated exactly when the system tick counter reaches a multiple of a second
 	//timer_ticks () % TIMER_FREQ == 0 일때만 업데이트시킨다
 	//현재 시스템의 load_avg의 100배인 결과를 도출해야함 (rounded to nearest int)
+	//load_avg는 시스템 내에서 동일한 값을 가진다 (따라서, 각 thread에 특정된 값이 아니라 global variable)
 	struct thread *current = thread_current();
-
-	//이것도 synchronization을 위해 entry/exit이 필요함
-	enum intr_level old_level;
-	old_level = intr_disable();
 
 	int load_avg_100 = multiply_int_fp(load_avg, 100);
 	int rounded_load_avg_100 = convert_to_int_nearest(load_avg_100);
-	intr_set_level(old_level);
 
 	return rounded_load_avg_100;
 }
@@ -660,14 +651,9 @@ thread_get_recent_cpu (void) {
 	/* TODO: Your implementation goes here */
 	struct thread *current = thread_current();
 
-	//synchronization을 위해 다른 thread 접근 막아놓고 현재 thread의 recent_cpu를 반환
-	enum intr_level old_level;
-	old_level = intr_disable();
-
 	int current_recent_cpu = current->recent_cpu;
 	int recent_cpu_100 = multiply_int_fp(current_recent_cpu, 100); 
 	int rounded_recent_cpu_100 = convert_to_int_nearest(recent_cpu_100);
-	intr_set_level(old_level);
 
 	return rounded_recent_cpu_100;
 }
@@ -675,13 +661,16 @@ thread_get_recent_cpu (void) {
 //priority = PRI_MAX - (recent_cpu / 4) - (nice * 2)
 int
 calculate_priority(struct thread *thread) {
+	//nice, priority는 integer이고 recent_cpu는 real number
 	int thread_nice = thread->nice;
 	int thread_recent_cpu = thread->recent_cpu;
 
+	int nice_mul = 2 * thread_nice;
 	int recent_cpu_div = divide_int_fp(thread_recent_cpu, 4);
-	int nice_mul = multiply_int_fp(thread_nice, 2);
-	int combine_terms = add_two_fp(recent_cpu_div, nice_mul);
-	int priority_calc = subtract_int_fp((int)PRI_MAX, combine_terms);
+	int combine_terms = add_fp_int(recent_cpu_div, nice_mul);
+	int subtract_priority = subtract_int_fp((int)PRI_MAX, combine_terms);
+	int priority_recovered = subtract_two_fp(0, subtract_priority);
+	int priority_calc = convert_to_int_zero(priority_recovered);
 	if (priority_calc >= PRI_MAX) {
 		priority_calc = PRI_MAX;
 	} else if (priority_calc <= PRI_MIN) {
@@ -709,15 +698,18 @@ calculate_recent_cpu(struct thread *thread) {
 //load_avg = (59/60) * load_avg + (1/60) * ready_threads
 int
 calculate_load_avg() {
+	struct thread *current = thread_current();
 	int fraction1 = divide_two_fp(convert_to_fp(59), convert_to_fp(60));
 	int fraction2 = divide_two_fp(convert_to_fp(1), convert_to_fp(60));
-	int first_term = multiply_int_fp(fraction1, load_avg);
+	int first_term = multiply_two_fp(fraction1, load_avg);
 	//ready_threads is the number of threads that are running or ready to run at time of update 
-	int ready_threads = (int)(list_size(&ready_list));
+	int ready_threads = 0;
 	//executing하고 있는 현재 thread도 포함시켜야함 (idle thread이면 포함하지 않는다)
-	struct thread *executing = thread_current();
-	if (executing != idle_thread)
-		ready_threads++;
+	if (current != idle_thread)
+		ready_threads += 1;
+	
+	size_t ready = list_size(&ready_list);
+	ready_threads += (int)ready;
 
 	int second_term = multiply_int_fp(fraction2, ready_threads);
 	int load_avg_calc = add_two_fp(first_term, second_term);
@@ -728,11 +720,12 @@ calculate_load_avg() {
 void
 increase_recent_cpu() {
 	struct thread *current = thread_current();
+	int thread_recent_cpu = current->recent_cpu;
 	if (current == idle_thread) {
 		return;
 	}
 	//recent_cpu를 increment by 1
-	int incremented_recent_cpu = add_fp_int(current->recent_cpu, 1);
+	int incremented_recent_cpu = add_fp_int(thread_recent_cpu, 1);
 	current->recent_cpu = incremented_recent_cpu;
 	//printf("recent_cpu value: ", incremented_recent_cpu);
 }
@@ -741,6 +734,8 @@ void
 recalculate_recent_cpu() {
 	//모든 thread에 대해 recent_cpu를 recalculate해줘야함
 	struct list_elem *e;
+	struct thread *current = thread_current();
+	current->recent_cpu = calculate_recent_cpu(current);
 	//ready_list랑 sleep_list 둘 다 recalculate 해줘야함.
 	for (e = list_begin (&ready_list); e != list_end (&ready_list); e = list_next (e)) {
     	struct thread *t = list_entry (e, struct thread, elem);
@@ -757,6 +752,8 @@ void
 recalculate_priority() {
 	//모든 thread에 대해 priority를 recalculate해줘야함
 	struct list_elem *e;
+	struct thread *current = thread_current();
+	current->priority = calculate_priority(current);
 	for (e = list_begin (&ready_list); e != list_end (&ready_list); e = list_next (e)) {
     	struct thread *t = list_entry (e, struct thread, elem);
     	t->priority = calculate_priority(t);

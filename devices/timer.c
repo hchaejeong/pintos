@@ -136,6 +136,7 @@ timer_interrupt (struct intr_frame *args UNUSED) {
 	// sleep_list에서 제거하고, ready_list로 move함.
 	// 그리고 global_tick을 update.
 	// 얘도 새로운 함수 만들어서 실행해도 될듯!
+	thread_recalculations();
 	thread_wakeup(ticks);
 	// thread_wakeup();
 }

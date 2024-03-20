@@ -57,7 +57,7 @@ add_fp_int(int x, int n) {
 
 int
 subtract_int_fp(int n, int x) {
-    return n * f - x;
+    return x - n * f;
 }
 
 int
