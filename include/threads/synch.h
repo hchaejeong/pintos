@@ -38,6 +38,10 @@ void cond_wait (struct condition *, struct lock *);
 void cond_signal (struct condition *, struct lock *);
 void cond_broadcast (struct condition *, struct lock *);
 
+// semaphore_elem 가지고 semaphore에 접속해서 그걸 이용해서 thread에 접속해서
+// priority 비교하는 함수 으악
+bool sema_compare_priority_func(const struct list_elem *a, const struct list_elem *b, void *aux);
+
 /* Optimization barrier.
  *
  * The compiler will not reorder operations across an

@@ -78,7 +78,7 @@ sema_down (struct semaphore *sema) {
 		// list_push_back (&sema->waiters, &thread_current ()->elem);
 		// 채정이가 만든 priority 비교 함수 쓰면 됨. 기작은 같으니까
 		list_insert_ordered(&sema->waiters,  &thread_current ()->elem, compare_priority_func, 0);
-		thread_block ();
+		thread_block (); // 안되는 애를 block한 뒤, 현재 ready list에 있는 애를 실행시킴 (schedule 함수 실행)
 	}
 	sema->value--;
 	intr_set_level (old_level);
@@ -216,11 +216,11 @@ lock_init (struct lock *lock) {
    we need to sleep. */
 void
 lock_acquire (struct lock *lock) {
-	ASSERT (lock != NULL);
-	ASSERT (!intr_context ());
-	ASSERT (!lock_held_by_current_thread (lock));
+	ASSERT (lock != NULL); // lock이 null이 아니어야함. (당연)
+	ASSERT (!intr_context ()); // 외부 interrupt가 없어야함?
+	ASSERT (!lock_held_by_current_thread (lock)); // lock이 현재 실행되는 current thread에 걸려있지 않아야.
 
-	sema_down (&lock->semaphore);
+	sema_down (&lock->semaphore); // 즉, 지금 lock이 풀려있는 상황이면 sema 1->0 해주고 block.
 	lock->holder = thread_current ();
 }
 
@@ -252,10 +252,11 @@ lock_try_acquire (struct lock *lock) {
 void
 lock_release (struct lock *lock) {
 	ASSERT (lock != NULL);
-	ASSERT (lock_held_by_current_thread (lock));
+	ASSERT (lock_held_by_current_thread (lock)); // 얘는 acquire과 반대!
+	// current thread가 lock되어있으면 그걸 풀어주는거지~
 
-	lock->holder = NULL;
-	sema_up (&lock->semaphore);
+	lock->holder = NULL; // lock holder을 null로 만들어준 뒤
+	sema_up (&lock->semaphore); // 가장 앞에 있는 애가 lock을 선점하게 해준다
 }
 
 /* Returns true if the current thread holds LOCK, false
@@ -310,11 +311,38 @@ cond_wait (struct condition *cond, struct lock *lock) {
 
 	ASSERT (cond != NULL);
 	ASSERT (lock != NULL);
-	ASSERT (!intr_context ());
-	ASSERT (lock_held_by_current_thread (lock));
+	ASSERT (!intr_context ()); // 외부 interrupt 없어야하고
+	ASSERT (lock_held_by_current_thread (lock)); // current thread가 lock 잡고있을 때
+
+	// 그니까 얘는 thread가 아니라 세마포를 갖고오는 애인건가
+	// 그렇지. thread에는 priority 변수밖에 없고 sema는 아예 다른거니까
+	// 원래 위에 sema 함수들에서 썼던 waiter list는 thread를 위한 리스트였고
+	// 지금 waiter list는 semaphore만을 위한 list인 거겠지 싶음
+	// 아니 근데 semaphore... list가 필요가있..나..?
+	// 현재 running 되고있는 애랑 이제 sema값을 서로 바꿔야 하니까 그런건가...
+	// 어쨌든 이걸 수정해야 하는 이유는 priority-condvar test 때문인 듯.
+	// Signaling...이 여기로 signal 보내는 거일 것 같다
+	// 근데 왜 이건 하지 않으면 30부터가 아니라 23부터 woke up 하는걸까?
 
 	sema_init (&waiter.semaphore, 0);
-	list_push_back (&cond->waiters, &waiter.elem);
+	//list_push_back (&cond->waiters, &waiter.elem);
+	
+	// 이제 또 이 waiters list에서 priority 순서대로 해야겠지
+	// 헿 모 다 비슷비슷하넹 ㅎㅎ
+	//list_insert_ordered (&cond->waiters, &waiter.elem, compare_priority_func, NULL);
+	// 하... ㅜ 왜 아무것도 안바뀌나 했더니 compare_priority_func는 thread일때만 사용할 수 있네
+	// 이게뭐야... 또 만들어야하자나ㅜㅜㅜ
+	// struct list *semaphore_waiters = &cond->waiters;
+	// struct semaphore_elem *semaphore_waiter = list_entry(list_rbegin(semaphore_waiters), struct semaphore_elem, elem);
+	// struct list *thread_waiters = &semaphore_waiter->semaphore.waiters;
+	// // 하이씨 그러면 thread_waiters에 있는 thread 들이랑
+	// // waiter.elem에 있는 semaphore_elem이랑 지금 형태가 다를거잖아 미치겟네
+	// // 그래서 이게 안되는 거였구나.... 뭐 계속 unexpected interrupt가 뜨는데 ㅜ
+	// list_insert_ordered (thread_waiters, &waiter.elem, compare_priority_func, NULL);
+
+	// 함수 굳이 만들어야 하나 싶었는데 만들어야 할 듯... 하
+	// 만들었다!
+	list_insert_ordered(&cond->waiters, &waiter.elem, sema_compare_priority_func, NULL);
 	lock_release (lock);
 	sema_down (&waiter.semaphore);
 	lock_acquire (lock);
@@ -334,9 +362,104 @@ cond_signal (struct condition *cond, struct lock *lock UNUSED) {
 	ASSERT (!intr_context ());
 	ASSERT (lock_held_by_current_thread (lock));
 
-	if (!list_empty (&cond->waiters))
+	if (!list_empty (&cond->waiters)) {
+		
+		/*
+		여기서도 signal을 보내서, wake up 하게 해야한다.
+		그게 바로 sema_up을 해주는거고,
+		그런데 여기서도 혹시 모르니 sort를 해줘야 한다
+		list_sort(&cond->waiters, compare_priority_func, NULL);
+		printf("Ddddddddd");
+		printf("%s", &list_entry(list_begin(&cond->waiters), struct thread, elem)->name);
+		어.. 근데 왜 TIMEOUT이 뜰까
+		음... condition의 waiters도 thread list인데 왜 안되지
+		printf("%d", &list_entry(list_begin(&cond->waiters), struct thread, elem)->priority);
+		이상하다. 어떻게 priority가 69459808이라는 값?처럼 클수가 있지?
+		원래라면 이 값은 24? 여야 하는데, 왜 이따구로 큰 것일까.
+		하 뭐가 문제지...
+		&cond->waiters : 이건 list의 형태를 띔. 그 list 안에 뭐가 있는지는 모르는데
+		일단 설명에는 List of waiting threads 라고 적혀있다고ㅜㅜ 그러면 thread list 아니냐고
+		하.. 근데 cond_wait 함수에는 waiter을 semaphore_elem이라고 적어놨다.
+		&cond->waiters의 waiter이겠지? 이건 확실할 듯
+		그러면 &cond->waiters의 elem들은 모두 struct semaphore_elem으로 이루어진 애들이다
+		즉, &cond->waiters는 semaphore_elem으로 이루어져 있다
+		그럼 다시 프린트를 해보자
+		printf("%s", list_entry(list_begin(&list_entry(list_begin(&cond->waiters), struct semaphore_elem, elem)->semaphore.waiters), struct thread, elem)->name);
+		하.. 뭔가 알 것 같음
+		&cond->waiters : struct semaphore_elem 들로 이루어진 list
+		그러면 이걸 원래 하던 list_entry 함수를 써서 list의 특정 원소를, semaphore_list 형태로 꺼내면,
+		&list_entry(&cond->waiters의 한 elem, struct semaphore_elem, elem)을 하면 된다.
+		그러면 얘는 semaphore_elem의 형태일 것이다.
+		
+		struct semaphore_elem {
+			struct list_elem elem; // list의 elem
+			struct semaphore semaphore; // semaphore 그 자체
+		};
+		
+		근데 여기서, semaphore이라는 struct는
+		
+		struct semaphore {
+			unsigned value; //Current value.
+			struct list waiters; //List of waiting threads.
+		};
+		
+		이렇게 생겼다. 그러면 semaphore에는 waiters라는 list가 또 따로 있고,
+		아니 근데 진짜 화나네 &cond->waiters도 list of waiting threads라매 진짜 어이X
+		그러면, &list_entry.. 까지 부분을 tmp라 하면
+		tmp->semaphore이 있고, 그거의 waiters를 불러온 다음에
+		이 waiters는 thread의 list가 확실하니까 (위에 sema_down이랑 sema_up 함수 때 썼으니
+		이제 여기서 다시 list_entry 이용해서 저 list 중 하나의 thread를 골라내면
+		후... 이제 진짜 이 thread의 priority를 비교할 수 있게 된답니다 우하하
+		이제 대충 깨달았네 으하하하하하 진짜 갈 길 멀다야
+		*/
+
+		/*
+		// 그러면, 우리가 원래 알던 compare_priority_func 함수를 사용하려면,
+		// thread의 list를 나타내는 tmp->semaphore.waiters 까지는 와야 하는 거잖슴
+		// 그러면 하나하나 차근차근 해봅세
+
+		struct list *semaphore_waiters = &cond->waiters;
+		struct semaphore_elem *semaphore_waiter = list_entry(list_begin(semaphore_waiters), struct semaphore_elem, elem);
+		struct list *thread_waiters = &semaphore_waiter->semaphore.waiters;
+		// 그러면 이제 thread_waiter는 thread로 이루어진 list이다!
+		// 이걸로 이제 sort 하면 될듯!!
+		list_sort(thread_waiters, compare_priority_func, NULL);
+
+		// 자, 차이가 없다고 생각했는데 이게 왜 안되는가 하면은,
+		// 결국에 여기서는 cond 안에 있는 waiters를 sort 해야하는데
+		// 나는 그냥 쓸데없이 thread_waiter에 있는 thread들을 sort하고 있었음
+		// 그러니까 제대로 cond의 waiters가 sort 안된거지 ㅜ
+		// 당연히 함수는 따로 만들어야 했던 거였음 뭐 어쩔수가 없었던 거였음
+		*/
+
+		// 결국 함수는 따로 만드는게 맞았던 것임.......
+		list_sort(&cond->waiters, sema_compare_priority_func, NULL);
 		sema_up (&list_entry (list_pop_front (&cond->waiters),
 					struct semaphore_elem, elem)->semaphore);
+	}
+}
+
+// 이걸로 semaphore list의 priority를 비교하는 것.
+// 일단 전체적인 맥락은 compare_priority_func와 비슷하겠지 싶음.
+bool
+sema_compare_priority_func(const struct list_elem *a, const struct list_elem *b, void *aux) {
+	// 지금 위에 (cond_signal())에 무지막지하게 적어놓은 것을 참고하면 된다.
+	// 결국에 여기서 input 되는 건 list_elem이고, 이건 semaphore_elem의 형태일 것이다.
+	// 왜냐? &cond->waiters는 semaphore_elem이라는 elem으로 이루어져 있으니까.
+
+	struct semaphore_elem *a_semaphore_waiter = list_entry(a, struct semaphore_elem, elem);
+	struct semaphore_elem *b_semaphore_waiter = list_entry(b, struct semaphore_elem, elem);
+	
+	// 그럼 이제 각각 list를 빼내올 수 있게 되고,
+	struct list a_thread_waiters = a_semaphore_waiter->semaphore.waiters;
+	struct list b_thread_waiters = b_semaphore_waiter->semaphore.waiters;
+
+	// 각 list의 thread의 priority를 빼내오면 된다! 이 부분은 compare_priority_func와 같은 형태
+	struct thread *a_thread_waiter = list_entry(list_begin(&a_thread_waiters), struct thread, elem);
+	struct thread *b_thread_waiter = list_entry(list_begin(&b_thread_waiters), struct thread, elem);
+
+	return a_thread_waiter->priority > b_thread_waiter->priority;
+
 }
 
 /* Wakes up all threads, if any, waiting on COND (protected by
