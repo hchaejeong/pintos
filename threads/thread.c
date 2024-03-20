@@ -241,6 +241,18 @@ thread_create (const char *name, int priority,
 	/* Add to run queue. */
 	thread_unblock (t);
 
+	// 위에 영어로 된 설명 읽어보니까, ordering은 너가 알아서 해라
+	// & priority scheduling도 너가 알아서 해라 라는 의미 같음.
+	// 그런데 여기서 더 ordering이 필요할까 싶기는 한데
+	// (thread_unblock())에서 list_insert_ordered를 썼으니까 순서대로 갔으리라 믿으나)
+	// 그래도 혹시 모르니까 또 sort 해주는게 좋지않을깡?
+	list_sort(&ready_list, compare_priority_func, NULL);
+	// 그다음에 이제 priority가 높은 애들은 바로 running 되어야 하니까,
+	// 만들어놨던 check ready pri..이 함수 쓰면 되지!
+	if (check_ready_priority_is_high()) {
+		thread_yield();
+	}
+
 	return tid;
 }
 

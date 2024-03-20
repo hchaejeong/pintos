@@ -1,6 +1,7 @@
 {
     "files.associations": {
-        "intr-stubs.h": "c"
+        "intr-stubs.h": "c",
+        "list.h": "c"
     },
     "C_Cpp.errorSquiggles": "enabled"
 }
