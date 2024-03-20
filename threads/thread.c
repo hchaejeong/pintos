@@ -169,19 +169,19 @@ thread_tick (void) {
 
 		//advanced scheduler인 경우 각 thread의 load_avg, recent_cpu, priority를 1초마다 계산하고
 		//모든 thread의 priority는 매 4번의 틱마다 다다시 계산해줘야함.
-		if (thread_mlfqs) {
-			int64_t tick_num = timer_ticks();
-			//recent_cpu는 매 tick마다 올라감
-			increase_recent_cpu();
-			
-			if (tick_num % TIMER_FREQ == 0) {
-				load_avg = calculate_load_avg();
-				recalculate_recent_cpu();
-			}
-			if (tick_num % 4 == 0) {
-				recalculate_priority();
-			}
+	if (thread_mlfqs) {
+		int64_t tick_num = thread_ticks;
+		//recent_cpu는 매 tick마다 올라감
+		increase_recent_cpu();
+		
+		if (tick_num % TIMER_FREQ == 0) {
+			load_avg = calculate_load_avg();
+			recalculate_recent_cpu();
 		}
+		if (tick_num % 4 == 0) {
+			recalculate_priority();
+		}
+	}
 
 	/* Enforce preemption. */
 	if (++thread_ticks >= TIME_SLICE)
@@ -594,7 +594,13 @@ thread_set_priority (int new_priority) {
 /* Returns the current thread's priority. */
 int
 thread_get_priority (void) {
-	return thread_current ()->priority;
+	struct thread *current = thread_current();
+	enum intr_level old_level;
+	old_level = intr_disable();
+	int priority_value = current->priority;
+	intr_set_level(old_level);
+
+	return priority_value;
 }
 
 /* Sets the current thread's nice value to NICE. */
