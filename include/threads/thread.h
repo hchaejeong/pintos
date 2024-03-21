@@ -164,7 +164,6 @@ int thread_get_load_avg (void);
 int calculate_priority(struct thread *);
 int calculate_recent_cpu(struct thread *);
 int calculate_load_avg(void);
-void increase_recent_cpu(void);
 void recalculate_recent_cpu(void);
 void recalculate_priority(void);
 
