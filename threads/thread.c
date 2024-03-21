@@ -181,8 +181,11 @@ thread_recalculations(void) {
 		return;
 	
 	int64_t tick_num = timer_ticks();
+	struct thread *current = thread_current();
+	int thread_recent_cpu = current->recent_cpu;
+
 	//recent_cpu는 매 tick마다 1씩 올라감
-	increase_recent_cpu();
+	current->recent_cpu = add_fp_int(thread_recent_cpu, 1);
 	
 	if (tick_num % TIMER_FREQ == 0) {
 		load_avg = calculate_load_avg();
@@ -715,19 +718,6 @@ calculate_load_avg() {
 	int load_avg_calc = add_two_fp(first_term, second_term);
 
 	return load_avg_calc;
-}
-
-void
-increase_recent_cpu() {
-	struct thread *current = thread_current();
-	int thread_recent_cpu = current->recent_cpu;
-	if (current == idle_thread) {
-		return;
-	}
-	//recent_cpu를 increment by 1
-	int incremented_recent_cpu = add_fp_int(thread_recent_cpu, 1);
-	current->recent_cpu = incremented_recent_cpu;
-	//printf("recent_cpu value: ", incremented_recent_cpu);
 }
 
 void
