@@ -133,14 +133,25 @@ sema_up (struct semaphore *sema) {
 		// thread_unblock (list_entry (list_pop_front (&sema->waiters), struct thread, elem));
 		// 하.. 그때 어떻게 했더라 일단은 혹시 모르니까 다시 sort 한 다음에...
 		list_sort(&sema->waiters, compare_priority_func, NULL);
+
+		//int high_lock_priority = list_entry(list_begin(&sema->waiters), struct thread, elem)->priority;
+		//printf("high priority in sema: %d\n", high_lock_priority);
+		// if (thread_current()->origin_priority < high_lock_priority) {
+		// 	thread_current()->priority = high_lock_priority;
+		// } else {
+		// 	thread_current()->priority = thread_current()->origin_priority;
+		// }
 		// 그다음에 어차피 unblock 하는건 똑같음. 그래야 waiter 명단에서 나오는 거니까.
 		// 그런데 이 상황에서, ready_list 중에 priority가 더 높으면 걔가 running 되어야함.
 		// 내가 thread.c에 함수 만들어놨으니까 ㅇㅇ 그거 쓰면 될듯
+		
 		thread_unblock (list_entry (list_pop_front (&sema->waiters), struct thread, elem));
 	}
 	sema->value++;
 	if (check_ready_priority_is_high()) {
 		// 이건 ready list 애가 priority가 더 높은거니까 yield() 해야함
+		// 이 부분은 io에서 FAQ에도 나온 부분. lock이 풀리면->wating하던 애는 unblock되고
+		// -> ready list의 high priority 애가 실행되어야 한다
 		thread_yield();
 	}
 	// 하... 난 진짜 미친X야 대체 뭐라고 아무생각없이 checkout을 한거니진짜로
@@ -220,8 +231,86 @@ lock_acquire (struct lock *lock) {
 	ASSERT (!intr_context ()); // 외부 interrupt가 없어야함?
 	ASSERT (!lock_held_by_current_thread (lock)); // lock이 현재 실행되는 current thread에 걸려있지 않아야.
 
+	// priority donation !
+	// 그러면 이제 이 부분을 많이 바꿔야함.
+	// priority-donate-one test 함수를 보니까, 어쨌든
+	// priority가 더 큰 thread가 lock을 acquire을 하면, 현재 실행되는 thread의 priority가 높은 애로 바뀌어야 함.
+	// 그러면, thread_set_priority() 함수를 해주면 된다.
+	// 음.. 그러면 위의 ASSERT (!lock_held_by_current_thread (lock));를 바꿔서
+	// current thread가 lock을 하고 있으면 current thread의 priority 올리면서 wait를 하고
+	// 아니면 바로 그냥 요청한 애가 차지하게 하면 된다.
+	// 내가 뭐라고 적어둔건지 모르겠다 ㅋㅋㅋ
+
+
+
+	// 진짜 이유를 모르겠는데, 지금 이 부분을 실행시키면 원래 되던 priority-condvar이 안 된다.
+	// 뭔가 상관 있을 것 같은 lock_holder->priority = thread_current()->priority를 주석처리해도
+	// 계속 안된다. 대체 얘네가 서로 뭔 관계가 있는거지?
+	// 하나하나 생각해보자. 여기서 겹쳐서 서로 영향을 주는게 대체 뭐가 있을까.
+	// 그냥 priority-donation-one을 돌렸을 때에도, sort() 하는 부분이 계속 next()의 ASSERT에
+	// 계속 걸렸다. 그래서 lock_release의 sort()를 바꿨더니,
+	// 갑자기 상관도 없는 sema_up의 sort()부분이 똑같은 next()의 ASSERT에 걸린다.
+	// 아니, wanna_lock_threads라는 list랑은 상관이 없는데, 저게 생기고 나서 이상한 오류가 계속 걸린다.
+	// 그러면 저 list자체가 문제인건가, 해서 print를 해보면, 막상 empty는 아니다.
+	// name을 출력해보면 acquire1이라고 잘만 나온다.
+	// 그럼 그냥, 그 안에 들어가는 요소들이 다른 list와 중복?뭐 그런거라서 서로 간섭?을 하는건가??
+	// 상관없어 보이는 list 하나 추가했다고 원래 list가 에바쎄바하는거보면 그 안의 요소들이 이상한거다.
+	
+	// 하.. 그러면 lock에서 list를 추가해줄까?
+	// 굳이.. 그러면 그냥 lock->semaphore->waiters를 쓰겠다
+
+	/*
+	struct thread *lock_holder = lock->holder;
+	if (lock_holder) {
+		if (lock_holder->priority < thread_current()->priority) {
+			// lock holder의 lock 대기자 명단에 current thread를 넣어준다.
+			//printf("lock_holder: %s\n", lock_holder->name);
+			//printf("current: %s\n", thread_current()->name);
+			if (list_empty(&lock_holder->wanna_lock_threads)) {
+				list_push_front(&lock_holder->wanna_lock_threads, &thread_current()->elem);
+			} else {
+				//printf("why pannic: %s\n", list_entry(list_begin(&lock_holder->wanna_lock_threads), struct thread, elem)->name);
+				//list_insert_ordered(&lock_holder->wanna_lock_threads, &thread_current()->elem, compare_priority_func, NULL);
+				list_insert(list_begin(&lock_holder->wanna_lock_threads), &thread_current()->elem);
+			}
+			//list_insert_ordered(&lock_holder->wanna_lock_threads, &thread_current()->elem, compare_priority_func, NULL);
+			// lock_holder의 priority를 가장 높게 설정해준다.
+			lock_holder->priority = thread_current()->priority;
+		}
+	}
+	*/
+
+	// if (lock->holder->priority < thread_current()->priority) {
+	// 	lock->holder->priority = thread_current()->priority;
+	// }
+	if (lock->holder) {
+		printf("lock acquire holder: %s, lock acquire curr: %s\n", lock->holder->name, thread_current()->name);
+		lock->holder->priority = thread_current()->priority;
+	}
+
 	sema_down (&lock->semaphore); // 즉, 지금 lock이 풀려있는 상황이면 sema 1->0 해주고 block.
+	
+	// 이게 계속 boot 에러메세지가 떴던 이유는
+	// lock->holder이 없을 수도 있어서였던거구나ㅜㅜㅜㅜㅜ 드디어 알았음
+	// struct thread *current_thread = thread_current();
+	// struct thread *lock_holder = lock->holder;
+	// if (lock->holder->priority < thread_current()->priority) {
+	// 	lock->holder->priority = thread_current()->priority;
+	// 	//thread_yield();
+	// }
+
+	//printf("\ncurrent thread priority: %d", thread_get_priority());
+
+	// if (lock->holder && !list_empty(&(&lock->semaphore)->waiters)) {
+	// 	// waiters가 있는데 lock holder이 비어있지는 않겠지
+	// 	lock->holder->priority = list_entry(list_begin(&(&lock->semaphore)->waiters), struct thread, elem)->priority;
+	// }
+	
 	lock->holder = thread_current ();
+	//printf("\nlock holder: %d\n", lock->holder->priority); // 왜 얘는 에러 안뜨고
+	//printf("\nlock holder: %s\n", lock_holder->name); // 이건 에러뜨지????
+	//printf("\ncurrent thread priority: %d", thread_get_priority());
+	//printf("\ncurrent thread priority: %d\n", thread_current()->priority);
 }
 
 /* Tries to acquires LOCK and returns true if successful or false
@@ -255,6 +344,63 @@ lock_release (struct lock *lock) {
 	ASSERT (lock_held_by_current_thread (lock)); // 얘는 acquire과 반대!
 	// current thread가 lock되어있으면 그걸 풀어주는거지~
 
+	//thread_current()->priority = 31; // 결국엔 이렇게 원래 자신의 priority로 돌아와야 한다
+	// 그래야만 다른 애들이 running할 수 있을테니까...
+	// 애가 lock을 풀고 나서도 계속 우선순위가 높으면 lock 잡고 싶은 애들이 잡고싶어도
+	// 우선 순위 때문에 못 잡을 것임. 그러니까 무조건 원래 priority로 내려와야함
+	// 아니다 자기한테 lock 건 애들 중에 가장 높은 priority로 돌아가야 한다
+	// 그러면 여기서 필요한 것만 생각해보자.
+	// lock을 잡고 있는 holder은 자신에게 lock을 대기타는 애들을 알아둬야함.
+	// 그런데 priority-donate-multiple을 보니까 lock도 여러개네...
+	// 하 그러면 semaphore_elem 만든것처럼 lock_elem 만들면 안되나? lock A B C 각각 해주면 되지않나?
+	// 그러면 진짜 이 전체를 다 뒤바꿔야 할 것 같기는 함. 이거만 한다고 해서 돌아갈 것 같지가 않아...
+	// holder은 thread니까 thread에 속성을 넣으면 될 것 같음.
+	// 그러면 자신에게 lock 요청을 한 thread들을 저장해 놓을 필요가 있음.
+	// 그리고 그 중에 가장 큰 priority를 가진 애로 자신의 priority를 잠시 설정해줘야 함.
+	// 마지막으로, 아무도 대기타는 애가 없거나 & 원래 자기거보다 낮은 애들만 남았을 때에는
+	// 자신의 priority로 돌아가야함. 그러면 자신의 priority 저장해두는 변수도 ㄱㄱ
+
+	//그러면, 일단 lock 하고싶은 애들의 list에서 가장 높은 priority 확인
+	/*
+	struct list *current_lock_threads = &thread_current()->wanna_lock_threads;
+	if (!list_empty(current_lock_threads)) {
+		//list_sort(current_lock_threads, compare_priority_func, NULL);
+		list_pop_front(current_lock_threads); // 맨 앞에 있는 애가 가질테니까 list에서 지워주기
+		int high_lock_priority = list_entry(list_begin(current_lock_threads), struct thread, elem)->priority;
+		if (thread_current()->origin_priority < high_lock_priority) {
+			thread_current()->priority = high_lock_priority;
+		} else {
+			thread_current()->priority = thread_current()->origin_priority;
+		}
+	}
+	*/
+	struct list *current_lock_threads = &(&lock->semaphore)->waiters;
+	if (!list_empty(current_lock_threads)) {
+
+		if (list_next(list_begin(current_lock_threads))) {
+			int high_lock_priority = list_entry(list_begin(current_lock_threads), struct thread, elem)->priority;
+			int next_high_lock_priority = list_entry(list_next(list_begin(current_lock_threads)), struct thread, elem)->priority;
+			printf("high priority: %d\n", high_lock_priority);
+			printf("next high priority: %d\n", next_high_lock_priority);
+			printf("name: %s, priority: %d, original priority: %d\n", thread_current()->name, thread_current()->priority, thread_current()->origin_priority);
+			// 이거만 보면 high priority는 제대로 수집되고 있는 걸 볼 수 있다
+			// 그런데 lock release가 안되는가...
+			if (thread_current()->origin_priority < next_high_lock_priority) {
+				//printf("여기로 들어가나?\n");
+				thread_current()->priority = next_high_lock_priority;
+			} else {
+				thread_current()->priority = thread_current()->origin_priority;
+			}
+			// 여기서, 왜 acquire1이 got the lock을 못하는 이유가 뭘까.
+			// 그렇다면 main이 계속 priority가 높은 상태라, 걔가 계속 실행되는 것이 아닐까?
+			// if (list_entry(list_begin(current_lock_threads), struct thread, elem)->priority == 32) {
+			// 	thread_current()->priority = 31;
+			// }
+			// acquire2가 done이라는 표시까지 했는데, 여기서 1이 got the lock을 못하는 것 같다.
+			// 그러면 lock_acquire 함수가 문제라는 것인가... lock을 get 못하면...
+		}
+	}
+
 	lock->holder = NULL; // lock holder을 null로 만들어준 뒤
 	sema_up (&lock->semaphore); // 가장 앞에 있는 애가 lock을 선점하게 해준다
 }
@@ -266,6 +412,9 @@ bool
 lock_held_by_current_thread (const struct lock *lock) {
 	ASSERT (lock != NULL);
 
+	//ASSERT(strcmp(thread_current()->name, "main") || strcmp(thread_current()->name, "acquire1") || strcmp(thread_current()->name, "acquire2"));
+	// ASSERT(strcmp(lock->holder->name, "main") || strcmp(lock->holder->name, "acquire1") || strcmp(lock->holder->name, "acquire2"));
+	//ASSERT(thread_current()->priority == 31 || thread_current()->priority == 32 || thread_current()->priority == 33);
 	return lock->holder == thread_current ();
 }
 

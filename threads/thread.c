@@ -371,6 +371,7 @@ thread_yield (void) {
 	list_insert_ordered(&ready_list, &curr->elem, compare_priority_func, NULL);
 	do_schedule (THREAD_READY);
 	intr_set_level (old_level);
+	printf("curr thread: %s, curr priority: %d\n", curr->name, curr->priority);
 }
 
 // thread_yield와 비슷하게 thread_sleep을 만들자.
@@ -669,7 +670,11 @@ init_thread (struct thread *t, const char *name, int priority) {
 	strlcpy (t->name, name, sizeof t->name);
 	t->tf.rsp = (uint64_t) t + PGSIZE - sizeof (void *);
 	t->priority = priority;
+	// 이제 이 init에서 origin priority도 저장해두면 될 듯
+	t->origin_priority = priority;
 	t->magic = THREAD_MAGIC;
+	// 그리고 lock 대기타는 list도 init하면 됨
+	//list_init(&t->wanna_lock_threads);
 }
 
 /* Chooses and returns the next thread to be scheduled.  Should

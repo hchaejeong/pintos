@@ -95,6 +95,11 @@ struct thread {
 	//각 thread의 local tick attribute을 저장해놔야함
 	int64_t wakeup_tick; 
 
+	// 자신의 원래 priority를 저장해두기
+	int origin_priority;
+	// lock 요청하는 thread들 저장하기
+	//struct list wanna_lock_threads;
+
 	/* Shared between thread.c and synch.c. */
 	struct list_elem elem;              /* List element. */
 
