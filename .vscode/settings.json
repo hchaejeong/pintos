@@ -3,6 +3,7 @@
         "intr-stubs.h": "c",
         "list.h": "c",
         "memory": "c"
+        "init.h": "c"
     },
     "C_Cpp.errorSquiggles": "enabled"
 }
