@@ -610,6 +610,8 @@ thread_set_priority (int new_priority) {
 		}
 		intr_set_level (old_level);
 
+		// 수정 올라가는지 확인. access token 발급받아서...
+
 //    //sort ready_list in decreasing order of priority   //then take the first element of the ready_list 
 //    list_sort(&ready_list, compare_priority_func, NULL);
    
