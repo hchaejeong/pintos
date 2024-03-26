@@ -1,7 +1,8 @@
 {
     "files.associations": {
         "intr-stubs.h": "c",
-        "list.h": "c"
+        "list.h": "c",
+        "memory": "c"
     },
     "C_Cpp.errorSquiggles": "enabled"
 }

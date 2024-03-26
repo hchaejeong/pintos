@@ -209,12 +209,18 @@ sema_test_helper (void *sema_) {
    acquire and release it.  When these restrictions prove
    onerous, it's a good sign that a semaphore should be used,
    instead of a lock. */
+
+// 나중에 lock_release에서 쓸 것
+//static struct list after_release_threads;
+//list_init(&after_release_threads);
+
 void
 lock_init (struct lock *lock) {
 	ASSERT (lock != NULL);
 
 	lock->holder = NULL;
 	sema_init (&lock->semaphore, 1);
+	//list_init(&after_release_threads); // list init해주기
 }
 
 /* Acquires LOCK, sleeping until it becomes available if
@@ -280,15 +286,101 @@ lock_acquire (struct lock *lock) {
 	}
 	*/
 
+
+	// 시도 1) thread의 원래 elem 그대로 list에 넣어보기. 서로 간섭이 일어났는지 장렬히 실패.
+	// 시도 2) thread에 새로운 list 속성 추가하는게 아니라, lock->semaphore->waiters 이용. 하나가 바뀌면 다른 하나가 안 바뀜. 실패.
+	// 시도 3) 다시 새로운 elem을 만들고 시작하자 - what_lock_elem
+	if (lock->holder) {
+
+		if (lock->holder->priority < thread_current()->priority) {
+			// 이렇게 lock 요청을 한 애가 priority가 더 큰 경우에,
+			thread_current()->what_lock = lock; // 이렇게 나는 지금 대기를 탔다 표시해주고,
+			// list_insert_ordered(&lock->holder->wanna_lock_threads, &thread_current()->what_lock_elem, lock_compare_priority_func, NULL);
+			// 에러가 뜨는데 왜그러는지 모르겠어서 일단은 비었을때/아닐때 나눠보자
+			// 어쨌든 이렇게 대기 list에다가 현재 list를 추가해줌. 물론 priority 순서대로
+			if (list_empty(&lock->holder->wanna_lock_threads)) {
+				list_push_front(&lock->holder->wanna_lock_threads, &thread_current()->what_lock_elem);
+			} else {
+				// 채정이가 만들어둔 함수 조금만 바꿔서 쓰면 됨
+				list_insert_ordered(&lock->holder->wanna_lock_threads, &thread_current()->what_lock_elem, lock_compare_priority_func, NULL);
+			}
+			// lock_holder의 priority를 가장 높게 설정해준다.
+			// lock->holder->priority = thread_current()->priority;
+			// 근데 어쨌든 이 thread_current()가 가장 높은 priority는 아닐 수가 있잖아
+			// 그러면 저 list 안에서 가장 높은 애로 찾아서 넣어야지
+			// 근데 이제 io 파일을 보면, nested donation 해결하라고 되어있음.
+			//thread_current()->what_lock->holder->priority = list_entry(list_begin(&thread_current()->what_lock->holder->wanna_lock_threads), struct thread, what_lock_elem)->priority;
+			lock->holder->priority = list_entry(list_begin(&lock->holder->wanna_lock_threads), struct thread, what_lock_elem)->priority;
+			// 일단 여기까지 하면 nested donation을 제외하고, 하나 안에서는 잘 됨
+			// nested donation 구현
+			// 위에서 이미 현재 lock holder에 대한건 적었으니, 그 뒤의 chain?들만 while문으로 적어주면 될 듯
+			struct thread *nested_thread = lock->holder;
+			while (nested_thread->what_lock) {
+				// 만약 lock이 그 앞에 thread도 걸려있는 경우에만, 계속 연쇄적으로 ㄱㄱ 해주면 됨
+				nested_thread->what_lock->holder->priority = list_entry(list_begin(&nested_thread->what_lock->holder->wanna_lock_threads), struct thread, what_lock_elem)->priority;
+				nested_thread = nested_thread->what_lock->holder;
+				// tmp 없이 lock->holder을 그대로 대입하니까, lock_held_by_current_thread(lock)에 걸린다.
+				// 왜그럴까??
+				// 그래서 tmp를 치환?했더니 오류가 안난다. 대체왜그러징
+			}
+		}
+		
+		/*
+		if (lock->holder->priority < thread_current()->priority) {
+			// thread_current()가 더 높은 경우에,
+			// 일단 이 thread는 해당 lock을 대기타고 있는거니까
+			// 나는 이 lock을 대기타고 있다고 표시
+			thread_current()->what_lock = lock;
+
+			printf("lock_holder: %s\n", lock->holder->name);
+			printf("current: %s\n", thread_current()->name);
+			
+			// lock holder의 lock 대기자 명단에 current thread를 넣어준다.
+			if (list_empty(&lock->holder->wanna_lock_threads)) {
+				list_push_front(&lock->holder->wanna_lock_threads, &thread_current()->what_lock_elem);
+				printf("why pannic: %s\n", list_entry(list_begin(&lock->holder->wanna_lock_threads), struct thread, what_lock_elem)->name);
+			} else {
+				printf("why pannic: %s\n", list_entry(list_begin(&lock->holder->wanna_lock_threads), struct thread, what_lock_elem)->name);
+				list_insert_ordered(&lock->holder->wanna_lock_threads, &thread_current()->what_lock_elem, lock_compare_priority_func, NULL);
+				//list_insert(list_begin(&lock->holder->wanna_lock_threads), &thread_current()->what_lock_elem);
+			}
+			*/
+			
+			
+			// lock_holder의 priority를 가장 높게 설정해준다.
+			// lock->holder->priority = thread_current()->priority;
+			// 근데 어쨌든 이 thread_current()가 가장 높은 priority는 아닐 수가 있잖아
+			// 그러면 저 list 안에서 가장 높은 애로 찾아서 넣어야지
+			/*
+			list_sort(&lock->holder->wanna_lock_threads, lock_compare_priority_func, NULL);
+			printf("whywhywhy: %d\n", list_entry(list_begin(&lock->holder->wanna_lock_threads), struct thread, what_lock_elem)->priority);
+			lock->holder->priority = list_entry(list_begin(&lock->holder->wanna_lock_threads), struct thread, what_lock_elem)->priority;
+			*/
+		//}
+
+	}
+
+
 	// if (lock->holder->priority < thread_current()->priority) {
 	// 	lock->holder->priority = thread_current()->priority;
 	// }
+
+	/*
 	if (lock->holder) {
 		printf("lock acquire holder: %s, lock acquire curr: %s\n", lock->holder->name, thread_current()->name);
 		lock->holder->priority = thread_current()->priority;
 	}
+	*/
+
+
+	// 깔끔하게 포기하자. 내가 생각했던 방법은 안되는 것이다. 계속 구현을 할 때마다 뭔가가 계속 부족하다.
+	// 처음에 생각했던 대로 thread에 속성을 그냥 새로 만들자.
+	// lock->semaphore->waiters만을 갖고 하는 건 불가능할 것 같다.
+	// 이게 가능할 거라고 생각한 내가 멍청한걸까....
 
 	sema_down (&lock->semaphore); // 즉, 지금 lock이 풀려있는 상황이면 sema 1->0 해주고 block.
+	// 그리고 이렇게 sema_down 완료했으면, lock을 얻은 것이므로, 이제 lock은 대기 안 탐
+	thread_current()->what_lock = NULL;
 	
 	// 이게 계속 boot 에러메세지가 떴던 이유는
 	// lock->holder이 없을 수도 있어서였던거구나ㅜㅜㅜㅜㅜ 드디어 알았음
@@ -374,6 +466,146 @@ lock_release (struct lock *lock) {
 		}
 	}
 	*/
+	// 지금까지 내가 잘못 생각하고 있었다. 당연히 가장 높은 priority인 애가 가져가겠지 이랬는데
+	// 이번에 풀린 lock에 대기타던 애가 저 wanna_lock_threads에서 가장 높은 priority가 아닐수도 있잖아!
+
+	
+	// 해당 lock에 대기탔던 애들을 모두 list에서 삭제해준다. 이제 얘네는 free상태.
+	// 뭐 여기서 가장 priority가 높은 애가 결국에는 lock holder가 될거니까
+	// release하는 이 함수 안에서는 굳이 생각 안 해도 될듯 싶음
+	// list.h에 있는 아주 좋은 이 for 설명글을 이용해서~
+
+	// release 후 남은 lock 대기 thread들만 모아둔 list를 새로 만들고, 거기다가 옮겨준 뒤
+	// 그냥 바꿔치기 해주면 될듯!!
+	//struct list after_release_threads;
+	//list_init(&after_release_threads);
+	//printf("is empty?: %s\n", list_empty(&after_release_threads));
+	//ASSERT(list_empty(&after_release_threads));
+	/*
+	for (struct list_elem *release = list_begin(&thread_current()->wanna_lock_threads); release != list_end(&thread_current()->wanna_lock_threads); release = list_next(release)) {
+		struct thread *tmp_thread = list_entry(release, struct thread, what_lock_elem);
+		if (tmp_thread->what_lock == lock) {
+			struct list_elem *next_remove = list_remove(release);
+			if (tmp_thread->what_lock != lock) {
+				list_push_front(&after_release_threads, next_remove);
+			}
+		} else {
+			// 지금 문제. after_release_thread에 원소를 넣으려고 하는데 무한루프가 도는 것이다.
+			list_push_front(&after_release_threads, release);
+		}
+	}
+	*/
+	
+	/*
+	struct list_elem *release = list_begin(&thread_current()->wanna_lock_threads);
+	struct list *store_not_release_threads = &thread_current()->after_release_threads;
+	ASSERT(list_empty(store_not_release_threads));
+	while (release != list_end(&thread_current()->wanna_lock_threads)) {
+		struct thread *tmp_thread = list_entry(release, struct thread, what_lock_elem);
+		if (tmp_thread->what_lock == lock) {
+			release = list_remove(release);
+		} else {
+			if (list_empty(store_not_release_threads)) {
+				list_push_front(store_not_release_threads, &tmp_thread->what_lock_elem);
+			} else {
+				// 지금 문제. after_release_thread에 원소를 넣으려고 하는데 무한루프가 도는 것이다.
+				list_insert_ordered(store_not_release_threads, &tmp_thread->what_lock_elem, lock_compare_priority_func, NULL);
+			}
+			release = list_next(release);
+		}
+	}
+	*/
+	
+
+	if (!list_empty(&thread_current()->wanna_lock_threads)) {
+		list_sort(&thread_current()->wanna_lock_threads, lock_compare_priority_func, NULL);
+		// 이렇게 reverse를 먼저 한 다음에,
+		list_reverse(&thread_current()->wanna_lock_threads);
+		struct list_elem *remain_high_priority_elem = list_begin(&thread_current()->wanna_lock_threads);
+		//struct list_elem *remain_high_priority_elem;
+		
+		// while (list_entry(remain_high_priority_elem, struct thread, what_lock_elem)->what_lock != lock) {
+		// 	if (remain_high_priority_elem == list_end(&thread_current()->wanna_lock_threads)) {
+		// 		break;
+		// 	}
+		// 	remain_high_priority_elem = list_next(remain_high_priority_elem);
+		// }
+		// list를 한 바퀴씩 돌리면서 lock대기탔던 애들을 하나씩 지우고,
+		// reverse를 했으니까 priority가 작은 순서대로 실행될거임.
+		// 그러면 결과적으로 마지막에는 remain_high_priority_elem이 계속 lock 대기타는 애들 중
+		// 가장 높은 priority를 가진 애로 될 것임.
+		for (struct list_elem *release = list_begin(&thread_current()->wanna_lock_threads); release != list_end(&thread_current()->wanna_lock_threads); release = list_next(release)) {
+			//printf("release priority: %d\n", list_entry(release, struct thread, what_lock_elem)->priority);
+			if (list_entry(release, struct thread, what_lock_elem)->what_lock == lock) {
+				list_remove(release);
+			} else {
+				remain_high_priority_elem = release;
+				//printf("remain priority: %d\n", list_entry(remain_high_priority_elem, struct thread, what_lock_elem)->priority);
+			}
+		}
+		// 그래서 만약 끝까지 모두 삭제됐다면,
+		// 또는 lock 대기타는 애들이 origin priority보다 작으면,
+		// origin priority로 설정해줘야 함.
+		if (list_empty(&thread_current()->wanna_lock_threads) || list_entry(remain_high_priority_elem, struct thread, what_lock_elem)->priority < thread_current()->origin_priority) {
+			thread_current()->priority = thread_current()->origin_priority;
+		} else {
+			// lock 대기타는 애들이 더 크면 당연히 그 priority로 바꿔줘야 함.
+			thread_current()->priority = list_entry(remain_high_priority_elem, struct thread, what_lock_elem)->priority;
+		} 
+		/*
+		if (remain_high_priority_elem == list_end(&thread_current()->wanna_lock_threads)) {
+			thread_current()->priority = thread_current()->origin_priority;
+		} else {
+			// lock 남은 애들중에 가장 priority 높은 애. 왜냐면 이미 sort한 상황에서 검색한것이니까
+			thread_current()->priority = list_entry(remain_high_priority_elem, struct thread, what_lock_elem)->priority;
+			// 아래에 for을 쓰니까 (priority-donate-nest) 가 두 번씩 뜬다.........
+			// 순서가 잘못됐나? lock remove를 먼저 해야하나?
+			for (struct list_elem *release = list_begin(&thread_current()->wanna_lock_threads); release != list_end(&thread_current()->wanna_lock_threads); release = list_next(release)) {
+				if (list_entry(release, struct thread, what_lock_elem)->what_lock != lock) {
+					// 남은 lock들 모두 제거
+					list_remove(release);
+				}
+			}
+		}
+		*/
+	}
+	
+	
+	
+
+	/*
+	struct list *current_lock_threads = &thread_current()->wanna_lock_threads;
+	if (!list_empty(current_lock_threads)) {
+		// 혹시모르니 한 번 더 sort
+		list_sort(current_lock_threads, lock_compare_priority_func, NULL);
+		struct thread *lock_front_thread = list_entry(list_pop_front(current_lock_threads), struct thread, what_lock_elem); // 맨 앞에 있는 애가 가질테니까 list에서 지워주기
+		printf("여기가 이상해?\n");
+		// 그런가보다. 여기가 이상한가보다. 여기서 list_pop_front를 해서 그런건가...
+		printf("release curr: %s\n", thread_current()->name);
+		// release curr이 main이다. 즉, main에게 priority를 32로 올려주고, 얘를 실행시켜서 lock이 풀린 상태.
+		// 그러면 acquire1에게 결국에는 주는거니까.
+		int high_lock_priority = list_entry(list_begin(current_lock_threads), struct thread, what_lock_elem)->priority;
+		printf("high lock priority: %d\n", high_lock_priority);
+		// 그래, 얘가 지금 list pop을 시켜버려서 그냥 빈 list가 된 것이다. 그래서 이상하게 아주 큰 숫자가 priority가 된 것이고.
+		// 그럼 여기서, 한 번 더 list가 empty한지 확인을 해야겠다.
+		if (list_empty(current_lock_threads)) {
+			// empty하면, 그냥 원래대로 priority를 돌아가게 하는건가...? 일단 한 번 해보자.
+			// release 되는 상황인거니까...?
+			// thread_current()->priority = thread_current()->origin_priority;
+			printf("지금 여기를 들어가서 priority가 떨어지는거야?\n");
+			// 아니다.. pop했던 애로 돌아가야 하는 것 같다...
+			thread_current()->priority = lock_front_thread->priority;
+		} else {
+			if (thread_current()->origin_priority < high_lock_priority) {
+				thread_current()->priority = high_lock_priority;
+			} else {
+				thread_current()->priority = thread_current()->origin_priority;
+			}
+		}
+	}
+	*/
+
+	/*
 	struct list *current_lock_threads = &(&lock->semaphore)->waiters;
 	if (!list_empty(current_lock_threads)) {
 
@@ -400,6 +632,9 @@ lock_release (struct lock *lock) {
 			// 그러면 lock_acquire 함수가 문제라는 것인가... lock을 get 못하면...
 		}
 	}
+	*/
+
+	// 그냥 안되는 것 같다. 내가 생각한 방법은 그냥 불가능한 것 같다.
 
 	lock->holder = NULL; // lock holder을 null로 만들어준 뒤
 	sema_up (&lock->semaphore); // 가장 앞에 있는 애가 lock을 선점하게 해준다
