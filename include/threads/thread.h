@@ -99,6 +99,18 @@ struct thread {
 	//각 thread의 local tick attribute을 저장해놔야함
 	int64_t wakeup_tick; 
 
+	// 자신의 원래 priority를 저장해두기
+	int origin_priority;
+	// 내가 어떤 lock을 대기타고 있는지 저장
+	struct lock *what_lock;
+	// lock 요청하는 thread들 저장하기
+	struct list wanna_lock_threads;
+	// lock 요청하는 thread를 list 형태로 저장하기 위한 새로운 elem
+	// 원래 있었던, 아래의 list_elem을 썼더니 그냥 간섭이 일어나서 그런지
+	// 계속 에러가 뜬다. 몇번을 시도해도 그런거면... 그냥 내가 코딩을 못하는건지
+	// 진짜 간섭이 일어나서 어쩔수가 없는건지 어쨌든 새로운 형태의 elem을 만들어야 겠다.
+	struct list_elem what_lock_elem;
+
 	/* Shared between thread.c and synch.c. */
 	struct list_elem elem;              /* List element. */
 
@@ -143,6 +155,12 @@ void thread_yield (void);
 
 //compare_priority_thread 함수 추가
 bool compare_priority_func(const struct list_elem *a,
+                             const struct list_elem *b,
+                             void *aux);
+
+// what_lock_elem을 위한 priority compare 함수
+//compare_priority_thread 함수 추가
+bool lock_compare_priority_func(const struct list_elem *a,
                              const struct list_elem *b,
                              void *aux);
 

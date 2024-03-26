@@ -123,6 +123,7 @@ thread_init (void) {
 	/* Set up a thread structure for the running thread. */
 	initial_thread = running_thread ();
 	init_thread (initial_thread, "main", PRI_DEFAULT);
+	// 지금 여기서, PRI_DEFAULT로 init을 해주고 있어서 origin priority가 31이 되는것임...
 
 	//nice랑 recent_cpu를 일단 0으로 초기화하기
 	initial_thread->nice = 0;
@@ -314,6 +315,15 @@ compare_priority_func (const struct list_elem *a,
    return a_thread->priority > b_thread->priority;
 }
 
+// what_lock_elem이라는 새로운 형태를 만들었으므로, 새로운 비교 함수도 만들어줘야함.
+bool
+lock_compare_priority_func (const struct list_elem *a, const struct list_elem *b, void *aux) {
+   struct thread *a_thread = list_entry(a, struct thread, what_lock_elem);
+   struct thread *b_thread = list_entry(b, struct thread, what_lock_elem);
+
+   return a_thread->priority > b_thread->priority;
+}
+
 /* Returns the name of the running thread. */
 const char *
 thread_name (void) {
@@ -404,6 +414,7 @@ thread_yield (void) {
 	list_insert_ordered(&ready_list, &curr->elem, compare_priority_func, NULL);
 	do_schedule (THREAD_READY);
 	intr_set_level (old_level);
+	//printf("curr thread: %s, curr priority: %d\n", curr->name, curr->priority);
 }
 
 // thread_yield와 비슷하게 thread_sleep을 만들자.
@@ -556,6 +567,29 @@ thread_wakeup(int64_t wake_up_tick) {
 /* Sets the current thread's priority to NEW_PRIORITY. */
 void
 thread_set_priority (int new_priority) {
+
+   struct thread *current = thread_current();
+   current->priority = new_priority;
+   current->origin_priority = new_priority; // 이렇게 해줘야 init에 의한 default값으로 인해 31이 되는 걸 피할 수 있음
+   //현재 thread의 priority이 더 이상 가장 큰 priority를 가지고 있지 않을 경우 yield cpu
+   //ready list의 priority를 다 살펴봐야함
+   
+   // 여기서도 set priority를 제대로 해줘야 한다.
+   // lock 남은 애들 중에 가장 높은 애로 해줘야 한다.
+   // 얘는 그냥 간단하게 sort 후 가장 앞에 있는 애만 해주면 되잖!
+   if (!list_empty(&thread_current()->wanna_lock_threads)) {
+	   list_sort(&thread_current()->wanna_lock_threads, lock_compare_priority_func, NULL);
+	   if (list_entry(list_begin(&thread_current()->wanna_lock_threads), struct thread, what_lock_elem)->priority > thread_current()->origin_priority) {
+		   thread_current()->priority = list_entry(list_begin(&thread_current()->wanna_lock_threads), struct thread, what_lock_elem)->priority;
+	   } else {
+		   thread_current()->priority = thread_current()->origin_priority;
+	   }
+   } else {
+	   thread_current()->priority = thread_current()->origin_priority;
+   }
+   
+//    printf("set priority curr: %s, priority: %d\n", thread_current()->name, thread_current()->priority);
+
 	//advanced scheduler를 사용할때는 disable
 	if (!thread_mlfqs) {
 		struct thread *current = thread_current();
@@ -563,6 +597,7 @@ thread_set_priority (int new_priority) {
 		//현재 thread의 priority이 더 이상 가장 큰 priority를 가지고 있지 않을 경우 yield cpu
 		//ready list의 priority를 다 살펴봐야함
 		struct list_elem *ready_elem;
+
 
    enum intr_level old_level;
    old_level = intr_disable ();
@@ -815,10 +850,19 @@ init_thread (struct thread *t, const char *name, int priority) {
 	strlcpy (t->name, name, sizeof t->name);
 	t->tf.rsp = (uint64_t) t + PGSIZE - sizeof (void *);
 	t->priority = priority;
+	// 이제 이 init에서 origin priority도 저장해두면 될 듯
+	t->origin_priority = priority;
 	t->magic = THREAD_MAGIC;
+
+	// 그리고 lock 대기타는 list도 init하면 됨
+	list_init(&t->wanna_lock_threads);
+	// 원하는 lock도 null로 init해줘야.
+	t->what_lock = NULL;
+
 	//initialize nice and recent_cpu
 	t->nice = running_thread()->nice;
 	t->recent_cpu = running_thread()->recent_cpu;
+
 }
 
 /* Chooses and returns the next thread to be scheduled.  Should
