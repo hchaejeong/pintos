@@ -568,28 +568,32 @@ thread_wakeup(int64_t wake_up_tick) {
 void
 thread_set_priority (int new_priority) {
 
-   struct thread *current = thread_current();
-   current->priority = new_priority;
-   current->origin_priority = new_priority; // 이렇게 해줘야 init에 의한 default값으로 인해 31이 되는 걸 피할 수 있음
-   //현재 thread의 priority이 더 이상 가장 큰 priority를 가지고 있지 않을 경우 yield cpu
-   //ready list의 priority를 다 살펴봐야함
-   
-   // 여기서도 set priority를 제대로 해줘야 한다.
-   // lock 남은 애들 중에 가장 높은 애로 해줘야 한다.
-   // 얘는 그냥 간단하게 sort 후 가장 앞에 있는 애만 해주면 되잖!
-   if (!list_empty(&thread_current()->wanna_lock_threads)) {
-	   list_sort(&thread_current()->wanna_lock_threads, lock_compare_priority_func, NULL);
-	   if (list_entry(list_begin(&thread_current()->wanna_lock_threads), struct thread, what_lock_elem)->priority > thread_current()->origin_priority) {
-		   thread_current()->priority = list_entry(list_begin(&thread_current()->wanna_lock_threads), struct thread, what_lock_elem)->priority;
-	   } else {
-		   thread_current()->priority = thread_current()->origin_priority;
-	   }
-   } else {
-	   thread_current()->priority = thread_current()->origin_priority;
-   }
-   
-//    printf("set priority curr: %s, priority: %d\n", thread_current()->name, thread_current()->priority);
+	//advanced scheduler를 사용할때는 disable
+	if (!thread_mlfqs) {
+		struct thread *current = thread_current();
+		current->priority = new_priority;
+		current->origin_priority = new_priority; // 이렇게 해줘야 init에 의한 default값으로 인해 31이 되는 걸 피할 수 있음
+		//현재 thread의 priority이 더 이상 가장 큰 priority를 가지고 있지 않을 경우 yield cpu
+		//ready list의 priority를 다 살펴봐야함
 
+		// 여기서도 set priority를 제대로 해줘야 한다.
+		// lock 남은 애들 중에 가장 높은 애로 해줘야 한다.
+		// 얘는 그냥 간단하게 sort 후 가장 앞에 있는 애만 해주면 되잖!
+		if (!list_empty(&thread_current()->wanna_lock_threads)) {
+			list_sort(&thread_current()->wanna_lock_threads, lock_compare_priority_func, NULL);
+			if (list_entry(list_begin(&thread_current()->wanna_lock_threads), struct thread, what_lock_elem)->priority > thread_current()->origin_priority) {
+				thread_current()->priority = list_entry(list_begin(&thread_current()->wanna_lock_threads), struct thread, what_lock_elem)->priority;
+			} else {
+				thread_current()->priority = thread_current()->origin_priority;
+			}
+		} else {
+			thread_current()->priority = thread_current()->origin_priority;
+		}
+
+		struct list_elem *ready_elem;
+	// printf("set priority curr: %s, priority: %d\n", thread_current()->name, thread_current()->priority);
+
+	/*
 	//advanced scheduler를 사용할때는 disable
 	if (!thread_mlfqs) {
 		struct thread *current = thread_current();
@@ -597,14 +601,14 @@ thread_set_priority (int new_priority) {
 		//현재 thread의 priority이 더 이상 가장 큰 priority를 가지고 있지 않을 경우 yield cpu
 		//ready list의 priority를 다 살펴봐야함
 		struct list_elem *ready_elem;
+	*/
 
-
-   enum intr_level old_level;
-   old_level = intr_disable ();
-   if (check_ready_priority_is_high()) {
-		thread_yield(); // ready list에 있는 애가 더 크면 thread_yield()하면 됨!
-   }
-   intr_set_level (old_level);
+		enum intr_level old_level;
+		old_level = intr_disable ();
+		if (check_ready_priority_is_high()) {
+			thread_yield(); // ready list에 있는 애가 더 크면 thread_yield()하면 됨!
+		}
+		intr_set_level (old_level);
 
 //    //sort ready_list in decreasing order of priority   //then take the first element of the ready_list 
 //    list_sort(&ready_list, compare_priority_func, NULL);
@@ -623,7 +627,7 @@ thread_set_priority (int new_priority) {
    //       thread_yield();
    //    }
    // }
-}
+	}
 }
 
 /* Returns the current thread's priority. */
