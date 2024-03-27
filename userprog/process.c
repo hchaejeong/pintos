@@ -51,6 +51,7 @@ process_create_initd (const char *file_name) {
 	strlcpy (fn_copy, file_name, PGSIZE);
 
 	/* Create a new thread to execute FILE_NAME. */
+	//command line을 파싱해서 얻은 파일 이름을 넘겨주고 thread을 새로 만든다 
 	tid = thread_create (file_name, PRI_DEFAULT, initd, fn_copy);
 	if (tid == TID_ERROR)
 		palloc_free_page (fn_copy);
@@ -162,29 +163,100 @@ error:
  * Returns -1 on fail. */
 int
 process_exec (void *f_name) {
+	//command line 문자열을 f_name으로 받는다
+	//char*로 변환을 해야 이를 문자열로 인식할 수 있다
 	char *file_name = f_name;
 	bool success;
 
 	/* We cannot use the intr_frame in the thread structure.
 	 * This is because when current thread rescheduled,
 	 * it stores the execution information to the member. */
+	//user프로그램을 실행할때 필요한 정보를 포함 - stores the registers of the user space
 	struct intr_frame _if;
 	_if.ds = _if.es = _if.ss = SEL_UDSEG;
 	_if.cs = SEL_UCSEG;
 	_if.eflags = FLAG_IF | FLAG_MBS;
 
 	/* We first kill the current context */
+	//현재 프로세스에 할당된 page directory를 지운다
 	process_cleanup ();
 
+	//command line을 파싱해서 들어오는 argument들을 찾고 어딘가에 보관해놔야한다
+	//pointer 형태로 각 argument를 저장해놓는다
+	//in C, we use strtok function to split a string into a series of tokens based on a particular delimiter
+	//char *strtok(char *str, const char *delim) 헤더 형태를 사용해서 들어온 command line을 space를 delimiter로 word단위로 쪼갠다
+	//하지만 strtok을 사용하면 original string도 바꾸게 된다 --> file_name를 다른 variable에 복사해놓자
+	//.io에서 command line arguments에는 128 바이트의 제한이 있다고 써있기 때문에 parameter을 저장하는 공간을 128 바이트만 allocate
+	char * command_line_args[128];
+
+	//C언어에서 string 복사하는거는 memcpy 함수 사용한다, strlen을 하면 \n을 포함하지 못하니까 +1까지 복사해야한다.
+	char * f_name_copy = memcpy(f_name_copy, file_name, strlen(file_name) + 1);
+	//space가 여러개 있는거와 하나 있는거랑 상관없이 다 제거해야함
+	const char delimeter[] = " ";
+	//첫 word는 program name이다
+	//strtok을 통해서 얻는 정보는 command line의 각 단어의 위치 정보이다!!! 실제 string을 가지고 있는게 아니라 그 address를 담고 있다
+	char * program_name = strtok(f_name_copy, delimeter);
+	//command_line_args는 이 단어들의 위치정보를 array형태로 모아둔곳이다. 결국에 command_line_args[i]는 각 단어의 위치정보이기때문에 단어 자체는 아니다.
+	command_line_args[0] = program_name;
+	int parameter_index = 1;
+
+	//strtok이 NULL을 내뱉을때까지 loop안에서 토큰을 찾아야한다
+	char * word_tokens;
+	while (word_tokens != NULL) {
+		word_tokens = strtok(NULL, delimeter);
+		command_line_args[parameter_index] = word_tokens;
+		parameter_index++;
+	}
+
 	/* And then load the binary */
+	//_if와 file_name을 현재 프로세스에 로드한다 (성공: 1, 실패: 0)
+	//load 함수의 설명: Stores the executable's entry point into *RIP and its initial stack pointer into *RSP
 	success = load (file_name, &_if);
 
 	/* If load failed, quit. */
+	//load를 끝내면 해당 메모리를 반환해야 한다
 	palloc_free_page (file_name);
+
 	if (!success)
 		return -1;
 
+	//오른쪽 (가장 마지막 parameter)부터 왼쪽 방향으로 스택에 push address of each string plus a null pointer sentinel (\0)
+	//'bar\0' 이런식으로 저장해줘야한다
+	//가장 마지막으로 추가된 parameter부터 푸시가 되어야하니까 현재 command_line_args 포인터가 포인트하고 있는게 마지막으로 추가된 위치 + 1일것이다
+	char *last_elem_index = command_line_args - 1;
+	char *word_stack_address[128];
+
+	//단어 데이터를 저장 해놓기 (order 상관없으니 그냥 첫 단어부터 넣기로 하자)
+	for (int i = 0; i < last_elem_index; i++) { 
+		//1. top of the stack에다가 각 단어들을 넣어줘야하고 이때 스택은 밑으로 grow한다 -- 스택 포인터가 커진다?
+		//x86-64에서는 %rsp 레지스터가 현재 스택의 가장 낮은 주소(Top의 주소)를 저장
+		void * stack_pointer = _if.rsp;
+
+		//현재 command_line_args는 각 단어의 address를 담고 있는 포인터이고 우리는 단어 데이터 자체를 넣어주려고 하기 때문에
+		//dereferencing을 해야지 각 i 인덱스에 있는 주소값에 어떤 단어가 담아있는지 알수있게된다
+		char actual_word = *command_line_args[i];
+		//void *: pointer to any data type
+
+		void * new_stack_pointer = stack_pointer - strlen(actual_word);	
+		//스택에 자리를 만들어줘야 푸시가 가능하기때문에 스택 포인터를 밑으로 늘린다
+		_if.rsp = new_stack_pointer;
+		//rsp가 가르키는 공간에다가 찾은 단어를 넣어줘야하기 때문에 실제 공간에 접근하고 단어를 단어의 길이만큼 만들어진 스택 공간에 넣어준다
+		//strcpy를 사용해서 src string을 dest에 복사해서 넣어주기 때문에 이걸 사용하자
+		strcpy(new_stack_pointer, &actual_word);
+
+		//이 단어가 어느 스택주소에 저장되어있는지를 나중에 또 넣어줘야하기때문에 현재 rsp가 가르키는 주소를 저장해줘야한다
+		word_stack_address[i] = new_stack_pointer;
+	}
+	//데이터를 Push 할 때는 %rsp의 값을 8만큼 감소시켜야 한다
+	
+
+	//round the stack pointer down to a multiple of 8 before the first push
+
+
+	//추가된 단어에 0을 더해줘야한다 (null terminating \0)
+
 	/* Start switched process. */
+	//load가 실행되면 context switching을 시킨다
 	do_iret (&_if);
 	NOT_REACHED ();
 }
