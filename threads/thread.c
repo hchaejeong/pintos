@@ -573,8 +573,6 @@ thread_set_priority (int new_priority) {
 		struct thread *current = thread_current();
 		current->priority = new_priority;
 		current->origin_priority = new_priority; // 이렇게 해줘야 init에 의한 default값으로 인해 31이 되는 걸 피할 수 있음
-		//현재 thread의 priority이 더 이상 가장 큰 priority를 가지고 있지 않을 경우 yield cpu
-		//ready list의 priority를 다 살펴봐야함
 
 		// 여기서도 set priority를 제대로 해줘야 한다.
 		// lock 남은 애들 중에 가장 높은 애로 해줘야 한다.
@@ -587,6 +585,7 @@ thread_set_priority (int new_priority) {
 				thread_current()->priority = thread_current()->origin_priority;
 			}
 		} else {
+			// 당연히 lock을 대기타고 있는 threads의 list가 비어있으면 origin_priority로 설정해줘야
 			thread_current()->priority = thread_current()->origin_priority;
 		}
 
@@ -602,7 +601,8 @@ thread_set_priority (int new_priority) {
 		//ready list의 priority를 다 살펴봐야함
 		struct list_elem *ready_elem;
 	*/
-
+		//현재 thread의 priority이 더 이상 가장 큰 priority를 가지고 있지 않을 경우 yield cpu
+		//ready list의 priority를 다 살펴봐야함
 		enum intr_level old_level;
 		old_level = intr_disable ();
 		if (check_ready_priority_is_high()) {
@@ -611,24 +611,14 @@ thread_set_priority (int new_priority) {
 		intr_set_level (old_level);
 
 		// 수정 올라가는지 확인. access token 발급받아서...
-
-//    //sort ready_list in decreasing order of priority   //then take the first element of the ready_list 
-//    list_sort(&ready_list, compare_priority_func, NULL);
    
-//    if (!list_empty(&ready_list)) {
-//       struct list_elem *highest_priority = list_begin(&ready_list);
-//       struct thread *ready_thread = list_entry(highest_priority, struct thread, elem);
-//       if (ready_thread->priority > current->priority) {
-//          thread_yield();
-//       }
-//    }
-
-   // for (ready_elem = list_begin(&ready_list); ready_elem != list_end(&ready_list); ready_elem = list_next(&ready_list)) {
-   //    struct thread *ready_thread = list_entry(ready_elem, struct thread, elem);
-   //    if (ready_thread->priority > current->priority) {
-   //       thread_yield();
-   //    }
-   // }
+	// if (!list_empty(&ready_list)) {
+	// 	struct list_elem *highest_priority = list_begin(&ready_list);
+	// 	struct thread *ready_thread = list_entry(highest_priority, struct thread, elem);
+	// 	if (ready_thread->priority > current->priority) {
+	// 		thread_yield();
+	// 	}
+	// }
 	}
 }
 
