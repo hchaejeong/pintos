@@ -188,14 +188,15 @@ process_exec (void *f_name) {
 	//하지만 strtok을 사용하면 original string도 바꾸게 된다 --> file_name를 다른 variable에 복사해놓자
 	//.io에서 command line arguments에는 128 바이트의 제한이 있다고 써있기 때문에 parameter을 저장하는 공간을 128 바이트만 allocate
 	char * command_line_args[128];
-
+	
 	//C언어에서 string 복사하는거는 memcpy 함수 사용한다, strlen을 하면 \n을 포함하지 못하니까 +1까지 복사해야한다.
-	char * f_name_copy = memcpy(f_name_copy, file_name, strlen(file_name) + 1);
+	//char * f_name_copy = memcpy(f_name_copy, file_name, strlen(file_name) + 1);
 	//space가 여러개 있는거와 하나 있는거랑 상관없이 다 제거해야함
 	const char delimeter[] = " ";
 	//첫 word는 program name이다
 	//strtok을 통해서 얻는 정보는 command line의 각 단어의 위치 정보이다!!! 실제 string을 가지고 있는게 아니라 그 address를 담고 있다
-	char * program_name = strtok(f_name_copy, delimeter);
+	char * save;
+	char * program_name = strtok_r(file_name, delimeter, &save);
 	//command_line_args는 이 단어들의 위치정보를 array형태로 모아둔곳이다. 결국에 command_line_args[i]는 각 단어의 위치정보이기때문에 단어 자체는 아니다.
 	command_line_args[0] = program_name;
 	int parameter_index = 1;
@@ -203,7 +204,7 @@ process_exec (void *f_name) {
 	//strtok이 NULL을 내뱉을때까지 loop안에서 토큰을 찾아야한다
 	char * word_tokens;
 	while (word_tokens != NULL) {
-		word_tokens = strtok(NULL, delimeter);
+		word_tokens = strtok_r(NULL, delimeter, &save);
 		command_line_args[parameter_index] = word_tokens;
 		parameter_index++;
 	}
@@ -212,13 +213,6 @@ process_exec (void *f_name) {
 	//_if와 file_name을 현재 프로세스에 로드한다 (성공: 1, 실패: 0)
 	//load 함수의 설명: Stores the executable's entry point into *RIP and its initial stack pointer into *RSP
 	success = load (file_name, &_if);
-
-	/* If load failed, quit. */
-	//load를 끝내면 해당 메모리를 반환해야 한다
-	palloc_free_page (file_name);
-
-	if (!success)
-		return -1;
 
 	//오른쪽 (가장 마지막 parameter)부터 왼쪽 방향으로 스택에 push address of each string plus a null pointer sentinel (\0)
 	//'bar\0' 이런식으로 저장해줘야한다
@@ -242,7 +236,7 @@ process_exec (void *f_name) {
 		_if.rsp = new_stack_pointer;
 		//rsp가 가르키는 공간에다가 찾은 단어를 넣어줘야하기 때문에 실제 공간에 접근하고 단어를 단어의 길이만큼 만들어진 스택 공간에 넣어준다
 		//strcpy를 사용해서 src string을 dest에 복사해서 넣어주기 때문에 이걸 사용하자
-		strcpy(new_stack_pointer, &actual_word);
+		strlcpy(new_stack_pointer, &actual_word, strlen(actual_word));
 
 		//이 단어가 어느 스택주소에 저장되어있는지를 나중에 또 넣어줘야하기때문에 현재 rsp가 가르키는 주소를 저장해줘야한다
 		word_stack_address[i] = new_stack_pointer;
@@ -277,6 +271,13 @@ process_exec (void *f_name) {
 	*(void ***) current_rsp = 0;
 
 	hex_dump(_if.rsp , _if.rsp , USER_STACK - (uint64_t)_if.rsp, true);
+
+	/* If load failed, quit. */
+	//load를 끝내면 해당 메모리를 반환해야 한다
+	palloc_free_page (file_name);
+
+	if (!success)
+		return -1;
 
 	/* Start switched process. */
 	//load가 실행되면 context switching을 시킨다
@@ -427,6 +428,7 @@ load (const char *file_name, struct intr_frame *if_) {
 	int i;
 
 	/* Allocate and activate page directory. */
+	//현재 쓰레드의 pml4 생성 및 활성화 시킨다 
 	t->pml4 = pml4_create ();
 	if (t->pml4 == NULL)
 		goto done;
@@ -440,6 +442,7 @@ load (const char *file_name, struct intr_frame *if_) {
 	}
 
 	/* Read and verify executable header. */
+	//오픈한 파일을 읽는다 - elf 헤더의 크기만큼 ehdr에 읽고 정상적인지 확인
 	if (file_read (file, &ehdr, sizeof ehdr) != sizeof ehdr
 			|| memcmp (ehdr.e_ident, "\177ELF\2\1\1", 7)
 			|| ehdr.e_type != 2
@@ -452,6 +455,7 @@ load (const char *file_name, struct intr_frame *if_) {
 	}
 
 	/* Read program headers. */
+	//
 	file_ofs = ehdr.e_phoff;
 	for (i = 0; i < ehdr.e_phnum; i++) {
 		struct Phdr phdr;
@@ -463,7 +467,7 @@ load (const char *file_name, struct intr_frame *if_) {
 		if (file_read (file, &phdr, sizeof phdr) != sizeof phdr)
 			goto done;
 		file_ofs += sizeof phdr;
-		switch (phdr.p_type) {
+		switch (phdr.p_type) {	//phdr 하나씩 순회하면서 type이 PT_LOAD이면 로드 가능한 세그먼트라는것을 표시한다
 			case PT_NULL:
 			case PT_NOTE:
 			case PT_PHDR:
@@ -476,11 +480,11 @@ load (const char *file_name, struct intr_frame *if_) {
 			case PT_SHLIB:
 				goto done;
 			case PT_LOAD:
-				if (validate_segment (&phdr, file)) {
-					bool writable = (phdr.p_flags & PF_W) != 0;
-					uint64_t file_page = phdr.p_offset & ~PGMASK;
-					uint64_t mem_page = phdr.p_vaddr & ~PGMASK;
-					uint64_t page_offset = phdr.p_vaddr & PGMASK;
+				if (validate_segment (&phdr, file)) {	//phdr 각각은 세그먼트에 대한 정보를 가진다
+					bool writable = (phdr.p_flags & PF_W) != 0;	
+					uint64_t file_page = phdr.p_offset & ~PGMASK;	//file page 초기화
+					uint64_t mem_page = phdr.p_vaddr & ~PGMASK;		//memory page 초기화 (밑 12 바이트 버린다)
+					uint64_t page_offset = phdr.p_vaddr & PGMASK;	//page offset 초기화 - read_bytes, zero_bytes 계산에 쓰인다
 					uint32_t read_bytes, zero_bytes;
 					if (phdr.p_filesz > 0) {
 						/* Normal segment.
@@ -513,6 +517,7 @@ load (const char *file_name, struct intr_frame *if_) {
 
 	/* TODO: Your code goes here.
 	 * TODO: Implement argument passing (see project2/argument_passing.html). */
+	
 
 	success = true;
 
