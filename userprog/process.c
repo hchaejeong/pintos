@@ -248,12 +248,35 @@ process_exec (void *f_name) {
 		word_stack_address[i] = new_stack_pointer;
 	}
 	//데이터를 Push 할 때는 %rsp의 값을 8만큼 감소시켜야 한다
-	
-
 	//round the stack pointer down to a multiple of 8 before the first push
+	void * current_rsp = _if.rsp;
+	while ((int)current_rsp % 8 != 0) {
+		current_rsp--;
+		*(uint8_t *)current_rsp = (uint8_t)0;	//rsp가 가르키고 있는 공간에 0으로 채워넣는다
+	}
 
+	//null pointer sentinel 0을 char * 타입으로 스택에 푸시해줘야한다 (null terminating \0)
+	current_rsp -= 8;
+	//*current_rsp로 스택 포인터가 가르키고있는 실제 공간/데이터에 char * 인 0을 넣어줘야한다.
+	//0은 int타입으로 인식되기 때문에 NULL을 넣어놓는다 - 따라서 현재 이 위치에는 null pointer를 넣어준다
+	*(char **)current_rsp = NULL;
 
-	//추가된 단어에 0을 더해줘야한다 (null terminating \0)
+	//이제 마지막 파라미터부터 시작해서 각 단어들이 지금 저장되어있는 위치를 스택에 추가한다
+	for (int i = last_elem_index; i >= 0; i--) {
+		current_rsp -= 8;
+		*(char **) current_rsp = word_stack_address[i];
+	} 
+
+	//지금 순차적으로 addresss를 스택에 넣어줬기때문에 지금 current_stack_pointer가 결국에 argv[0]의 포인터를 담고 있다
+	//command_line의 첫 단어는 program name을 담고 있고 이를 가르키는 포인터를 %rsi에 저장해놓는다
+	_if.R.rsi = current_rsp;
+	_if.R.rdi = parameter_index;
+
+	//fake return address를 마지막으로 푸시해야하기때문에 그냥 0을 넣는다 -- 타임은 void (*) ()
+	current_rsp -= 8;
+	*(void ***) current_rsp = 0;
+
+	hex_dump(_if.rsp , _if.rsp , USER_STACK - (uint64_t)_if.rsp, true);
 
 	/* Start switched process. */
 	//load가 실행되면 context switching을 시킨다
@@ -276,6 +299,8 @@ process_wait (tid_t child_tid UNUSED) {
 	/* XXX: Hint) The pintos exit if process_wait (initd), we recommend you
 	 * XXX:       to add infinite loop here before
 	 * XXX:       implementing the process_wait. */
+	bool temporary = true;
+	while(temporary) {};
 	return -1;
 }
 
