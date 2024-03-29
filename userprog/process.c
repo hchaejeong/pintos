@@ -50,9 +50,11 @@ process_create_initd (const char *file_name) {
 		return TID_ERROR;
 	strlcpy (fn_copy, file_name, PGSIZE);
 
+	char * parsed;
+
 	/* Create a new thread to execute FILE_NAME. */
 	//command line을 파싱해서 얻은 파일 이름을 넘겨주고 thread을 새로 만든다 
-	tid = thread_create (file_name, PRI_DEFAULT, initd, fn_copy);
+	tid = thread_create (strtok_r(file_name, " ", &parsed), PRI_DEFAULT, initd, fn_copy);
 	if (tid == TID_ERROR)
 		palloc_free_page (fn_copy);
 	return tid;
@@ -187,26 +189,27 @@ process_exec (void *f_name) {
 	//char *strtok(char *str, const char *delim) 헤더 형태를 사용해서 들어온 command line을 space를 delimiter로 word단위로 쪼갠다
 	//하지만 strtok을 사용하면 original string도 바꾸게 된다 --> file_name를 다른 variable에 복사해놓자
 	//.io에서 command line arguments에는 128 바이트의 제한이 있다고 써있기 때문에 parameter을 저장하는 공간을 128 바이트만 allocate
-	char * command_line_args[128];
+	char * command_line_args[64];
+	//char * f_name_copy[64];
 	
 	//C언어에서 string 복사하는거는 memcpy 함수 사용한다, strlen을 하면 \n을 포함하지 못하니까 +1까지 복사해야한다.
-	//char * f_name_copy = memcpy(f_name_copy, file_name, strlen(file_name) + 1);
+	//memcpy(f_name_copy, file_name, strlen(file_name) + 1);
 	//space가 여러개 있는거와 하나 있는거랑 상관없이 다 제거해야함
 	const char delimeter[] = " ";
 	//첫 word는 program name이다
 	//strtok을 통해서 얻는 정보는 command line의 각 단어의 위치 정보이다!!! 실제 string을 가지고 있는게 아니라 그 address를 담고 있다
 	char * save;
-	char * program_name = strtok_r(file_name, delimeter, &save);
+	char * word_tokens = strtok_r(file_name, delimeter, &save);
 	//command_line_args는 이 단어들의 위치정보를 array형태로 모아둔곳이다. 결국에 command_line_args[i]는 각 단어의 위치정보이기때문에 단어 자체는 아니다.
-	command_line_args[0] = program_name;
-	int parameter_index = 1;
+	command_line_args[0] = word_tokens;
+	int parameter_index = 0;
 
 	//strtok이 NULL을 내뱉을때까지 loop안에서 토큰을 찾아야한다
-	char * word_tokens;
+	//char * word_tokens;
 	while (word_tokens != NULL) {
+		parameter_index++;
 		word_tokens = strtok_r(NULL, delimeter, &save);
 		command_line_args[parameter_index] = word_tokens;
-		parameter_index++;
 	}
 
 	/* And then load the binary */
@@ -217,11 +220,13 @@ process_exec (void *f_name) {
 	//오른쪽 (가장 마지막 parameter)부터 왼쪽 방향으로 스택에 push address of each string plus a null pointer sentinel (\0)
 	//'bar\0' 이런식으로 저장해줘야한다
 	//가장 마지막으로 추가된 parameter부터 푸시가 되어야하니까 현재 command_line_args 포인터가 포인트하고 있는게 마지막으로 추가된 위치 + 1일것이다
-	char *last_elem_index = command_line_args - 1;
-	char *word_stack_address[128];
+	//char *last_elem_index = command_line_args - 1;
+	//int로 카운트를 따라야하기때문에 parameter_index를 사용해서 오른쪽부터 왼쪽까지 iterate한다
+	char *word_stack_address[64];
 
 	//단어 데이터를 저장 해놓기 (order 상관없으니 그냥 첫 단어부터 넣기로 하자)
-	for (int i = 0; i < last_elem_index; i++) { 
+	//null pointer sentinel도 있기 때문에 parameter_index부터 시작해서 strlen + 1만큼 loop해야한다
+	for (int i = parameter_index; i >= 0; i--) { 
 		//1. top of the stack에다가 각 단어들을 넣어줘야하고 이때 스택은 밑으로 grow한다 -- 스택 포인터가 커진다?
 		//x86-64에서는 %rsp 레지스터가 현재 스택의 가장 낮은 주소(Top의 주소)를 저장
 		void * stack_pointer = _if.rsp;
@@ -231,15 +236,14 @@ process_exec (void *f_name) {
 		char actual_word = *command_line_args[i];
 		//void *: pointer to any data type
 
-		void * new_stack_pointer = stack_pointer - strlen(actual_word);	
+		stack_pointer -= (strlen(actual_word) + 1);	
 		//스택에 자리를 만들어줘야 푸시가 가능하기때문에 스택 포인터를 밑으로 늘린다
-		_if.rsp = new_stack_pointer;
 		//rsp가 가르키는 공간에다가 찾은 단어를 넣어줘야하기 때문에 실제 공간에 접근하고 단어를 단어의 길이만큼 만들어진 스택 공간에 넣어준다
 		//strcpy를 사용해서 src string을 dest에 복사해서 넣어주기 때문에 이걸 사용하자
-		strlcpy(new_stack_pointer, &actual_word, strlen(actual_word));
+		strlcpy((char *)stack_pointer, command_line_args[i], strlen(actual_word) + 1);
 
 		//이 단어가 어느 스택주소에 저장되어있는지를 나중에 또 넣어줘야하기때문에 현재 rsp가 가르키는 주소를 저장해줘야한다
-		word_stack_address[i] = new_stack_pointer;
+		command_line_args[i] = *(char **)stack_pointer;
 	}
 	//데이터를 Push 할 때는 %rsp의 값을 8만큼 감소시켜야 한다
 	//round the stack pointer down to a multiple of 8 before the first push
@@ -256,7 +260,7 @@ process_exec (void *f_name) {
 	*(char **)current_rsp = NULL;
 
 	//이제 마지막 파라미터부터 시작해서 각 단어들이 지금 저장되어있는 위치를 스택에 추가한다
-	for (int i = last_elem_index; i >= 0; i--) {
+	for (int i = parameter_index; i >= 0; i--) {
 		current_rsp -= 8;
 		*(char **) current_rsp = word_stack_address[i];
 	} 
