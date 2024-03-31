@@ -189,19 +189,22 @@ process_exec (void *f_name) {
 	//char *strtok(char *str, const char *delim) 헤더 형태를 사용해서 들어온 command line을 space를 delimiter로 word단위로 쪼갠다
 	//하지만 strtok을 사용하면 original string도 바꾸게 된다 --> file_name를 다른 variable에 복사해놓자
 	//.io에서 command line arguments에는 128 바이트의 제한이 있다고 써있기 때문에 parameter을 저장하는 공간을 128 바이트만 allocate
-	char * command_line_args[64];
+	char *command_line_args[64];
 	//char * f_name_copy[64];
 	
 	//C언어에서 string 복사하는거는 memcpy 함수 사용한다, strlen을 하면 \n을 포함하지 못하니까 +1까지 복사해야한다.
+	//memcpy(void * ptr, int value, size_t num)이라 ptr에서 value까지의 바이트 길이
 	//memcpy(f_name_copy, file_name, strlen(file_name) + 1);
 	//space가 여러개 있는거와 하나 있는거랑 상관없이 다 제거해야함
 	const char delimeter[] = " ";
 	//첫 word는 program name이다
 	//strtok을 통해서 얻는 정보는 command line의 각 단어의 위치 정보이다!!! 실제 string을 가지고 있는게 아니라 그 address를 담고 있다
+	//strtok_r을 하면 공백을 찾으면 이 자리에 null sentinel을 대신 넣어주게 된다 - 우리가 원하는 바 
 	char * save;
 	char * word_tokens = strtok_r(file_name, delimeter, &save);
+	char * program_name = word_tokens;
 	//command_line_args는 이 단어들의 위치정보를 array형태로 모아둔곳이다. 결국에 command_line_args[i]는 각 단어의 위치정보이기때문에 단어 자체는 아니다.
-	command_line_args[0] = word_tokens;
+	command_line_args[0] = program_name;
 	int parameter_index = 0;
 
 	//strtok이 NULL을 내뱉을때까지 loop안에서 토큰을 찾아야한다
@@ -217,62 +220,71 @@ process_exec (void *f_name) {
 	//load 함수의 설명: Stores the executable's entry point into *RIP and its initial stack pointer into *RSP
 	success = load (file_name, &_if);
 
-	//오른쪽 (가장 마지막 parameter)부터 왼쪽 방향으로 스택에 push address of each string plus a null pointer sentinel (\0)
-	//'bar\0' 이런식으로 저장해줘야한다
 	//가장 마지막으로 추가된 parameter부터 푸시가 되어야하니까 현재 command_line_args 포인터가 포인트하고 있는게 마지막으로 추가된 위치 + 1일것이다
 	//char *last_elem_index = command_line_args - 1;
 	//int로 카운트를 따라야하기때문에 parameter_index를 사용해서 오른쪽부터 왼쪽까지 iterate한다
-	char *word_stack_address[64];
 
 	//단어 데이터를 저장 해놓기 (order 상관없으니 그냥 첫 단어부터 넣기로 하자)
 	//null pointer sentinel도 있기 때문에 parameter_index부터 시작해서 strlen + 1만큼 loop해야한다
-	for (int i = parameter_index; i >= 0; i--) { 
+	struct intr_frame * frame = &_if;
+	//command_line_args의 첫 element의 주소를 가르키게된다
+	char **words = command_line_args;
+	//오른쪽 (가장 마지막 parameter)부터 왼쪽 방향으로 스택에 push address of each string plus a null pointer sentinel (\0)
+	//'bar\0' 이런식으로 저장해줘야한다
+	char *word_stack_address[64];
+
+	for (int i = parameter_index - 1; i >= 0; i--) { 
 		//1. top of the stack에다가 각 단어들을 넣어줘야하고 이때 스택은 밑으로 grow한다 -- 스택 포인터가 커진다?
 		//x86-64에서는 %rsp 레지스터가 현재 스택의 가장 낮은 주소(Top의 주소)를 저장
-		void * stack_pointer = _if.rsp;
+		//(pointer) -> (variable)으로 하면 포인터가 가르키고 있는 variable의 실제 정보를 가져온다
+		//void * stack_pointer = frame -> rsp;
 
 		//현재 command_line_args는 각 단어의 address를 담고 있는 포인터이고 우리는 단어 데이터 자체를 넣어주려고 하기 때문에
-		//dereferencing을 해야지 각 i 인덱스에 있는 주소값에 어떤 단어가 담아있는지 알수있게된다
-		char actual_word = *command_line_args[i];
+		//words[i]는 ith argument의 정보를 담고 있는 포인터이다
+		//char** actual_word = words[i];
 		//void *: pointer to any data type
-
-		stack_pointer -= (strlen(actual_word) + 1);	
+		
+		//strlen에서 assertion 'string' failed 에러가 난다 -- 즉 words에 뭐가 안 담겨져 들어가는거 아닌가
+		frame -> rsp -= (strlen(command_line_args[i]) + 1);	
 		//스택에 자리를 만들어줘야 푸시가 가능하기때문에 스택 포인터를 밑으로 늘린다
 		//rsp가 가르키는 공간에다가 찾은 단어를 넣어줘야하기 때문에 실제 공간에 접근하고 단어를 단어의 길이만큼 만들어진 스택 공간에 넣어준다
 		//strcpy를 사용해서 src string을 dest에 복사해서 넣어주기 때문에 이걸 사용하자
-		strlcpy((char *)stack_pointer, command_line_args[i], strlen(actual_word) + 1);
+		strlcpy(frame -> rsp, command_line_args[i], strlen(command_line_args[i]) + 1);
 
 		//이 단어가 어느 스택주소에 저장되어있는지를 나중에 또 넣어줘야하기때문에 현재 rsp가 가르키는 주소를 저장해줘야한다
-		command_line_args[i] = *(char **)stack_pointer;
+		word_stack_address[i] = frame -> rsp;
 	}
 	//데이터를 Push 할 때는 %rsp의 값을 8만큼 감소시켜야 한다
 	//round the stack pointer down to a multiple of 8 before the first push
-	void * current_rsp = _if.rsp;
-	while ((int)current_rsp % 8 != 0) {
-		current_rsp--;
-		*(uint8_t *)current_rsp = (uint8_t)0;	//rsp가 가르키고 있는 공간에 0으로 채워넣는다
+	//void * current_rsp = _if.rsp;
+	while (frame -> rsp % 8 != 0) {
+		//printf("inside here");
+		frame -> rsp = frame->rsp - 1;
+		*(uint8_t *)frame -> rsp = 0;	//rsp가 가르키고 있는 공간에 0으로 채워넣는다
 	}
 
 	//null pointer sentinel 0을 char * 타입으로 스택에 푸시해줘야한다 (null terminating \0)
-	current_rsp -= 8;
+	frame -> rsp -= 8;
 	//*current_rsp로 스택 포인터가 가르키고있는 실제 공간/데이터에 char * 인 0을 넣어줘야한다.
 	//0은 int타입으로 인식되기 때문에 NULL을 넣어놓는다 - 따라서 현재 이 위치에는 null pointer를 넣어준다
-	*(char **)current_rsp = NULL;
+	memset(frame -> rsp, 0, sizeof(char **));
+	//printf("added null pointer");
 
 	//이제 마지막 파라미터부터 시작해서 각 단어들이 지금 저장되어있는 위치를 스택에 추가한다
-	for (int i = parameter_index; i >= 0; i--) {
-		current_rsp -= 8;
-		*(char **) current_rsp = word_stack_address[i];
+	for (int i = parameter_index - 1; i >= 0; i--) {
+		//printf("loop for adding address");
+		frame -> rsp -= 8;
+		memcpy(frame -> rsp, &word_stack_address[i], sizeof(char *));
 	} 
 
 	//지금 순차적으로 addresss를 스택에 넣어줬기때문에 지금 current_stack_pointer가 결국에 argv[0]의 포인터를 담고 있다
 	//command_line의 첫 단어는 program name을 담고 있고 이를 가르키는 포인터를 %rsi에 저장해놓는다
-	_if.R.rsi = current_rsp;
-	_if.R.rdi = parameter_index;
+	frame -> R.rsi = frame -> rsp;
+	frame -> R.rdi = parameter_index;
 
 	//fake return address를 마지막으로 푸시해야하기때문에 그냥 0을 넣는다 -- 타임은 void (*) ()
-	current_rsp -= 8;
-	*(void ***) current_rsp = 0;
+	frame -> rsp -= 8;
+	memset(frame -> rsp, 0, sizeof(void *));
 
 	hex_dump(_if.rsp , _if.rsp , USER_STACK - (uint64_t)_if.rsp, true);
 
@@ -304,8 +316,10 @@ process_wait (tid_t child_tid UNUSED) {
 	/* XXX: Hint) The pintos exit if process_wait (initd), we recommend you
 	 * XXX:       to add infinite loop here before
 	 * XXX:       implementing the process_wait. */
-	bool temporary = true;
-	while(temporary) {};
+	//bool temporary = true;
+	for (int i = 0; i < 1000000000; i++) {
+
+	}
 	return -1;
 }
 
