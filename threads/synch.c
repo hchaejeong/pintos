@@ -141,7 +141,7 @@ sema_up (struct semaphore *sema) {
 		thread_unblock (list_entry (list_pop_front (&sema->waiters), struct thread, elem));
 	}
 	sema->value++;
-	if (check_ready_priority_is_high()) {
+	if (!intr_context() && check_ready_priority_is_high()) {
 		// 이건 ready list 애가 priority가 더 높은거니까 yield() 해야함
 		// 이 부분은 io에서 FAQ에도 나온 부분. lock이 풀리면->wating하던 애는 unblock되고
 		// -> ready list의 high priority 애가 실행되어야 한다

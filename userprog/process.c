@@ -50,8 +50,11 @@ process_create_initd (const char *file_name) {
 		return TID_ERROR;
 	strlcpy (fn_copy, file_name, PGSIZE);
 
+	char * parsed;
+
 	/* Create a new thread to execute FILE_NAME. */
-	tid = thread_create (file_name, PRI_DEFAULT, initd, fn_copy);
+	//command line을 파싱해서 얻은 파일 이름을 넘겨주고 thread을 새로 만든다 
+	tid = thread_create (strtok_r(file_name, " ", &parsed), PRI_DEFAULT, initd, fn_copy);
 	if (tid == TID_ERROR)
 		palloc_free_page (fn_copy);
 	return tid;
@@ -162,29 +165,138 @@ error:
  * Returns -1 on fail. */
 int
 process_exec (void *f_name) {
+	//command line 문자열을 f_name으로 받는다
+	//char*로 변환을 해야 이를 문자열로 인식할 수 있다
 	char *file_name = f_name;
 	bool success;
 
 	/* We cannot use the intr_frame in the thread structure.
 	 * This is because when current thread rescheduled,
 	 * it stores the execution information to the member. */
+	//user프로그램을 실행할때 필요한 정보를 포함 - stores the registers of the user space
 	struct intr_frame _if;
 	_if.ds = _if.es = _if.ss = SEL_UDSEG;
 	_if.cs = SEL_UCSEG;
 	_if.eflags = FLAG_IF | FLAG_MBS;
 
 	/* We first kill the current context */
+	//현재 프로세스에 할당된 page directory를 지운다
 	process_cleanup ();
 
+	//command line을 파싱해서 들어오는 argument들을 찾고 어딘가에 보관해놔야한다
+	//pointer 형태로 각 argument를 저장해놓는다
+	//in C, we use strtok function to split a string into a series of tokens based on a particular delimiter
+	//char *strtok(char *str, const char *delim) 헤더 형태를 사용해서 들어온 command line을 space를 delimiter로 word단위로 쪼갠다
+	//하지만 strtok을 사용하면 original string도 바꾸게 된다 --> file_name를 다른 variable에 복사해놓자
+	//.io에서 command line arguments에는 128 바이트의 제한이 있다고 써있기 때문에 parameter을 저장하는 공간을 128 바이트만 allocate
+	char *command_line_args[64];
+	//char * f_name_copy[64];
+	
+	//C언어에서 string 복사하는거는 memcpy 함수 사용한다, strlen을 하면 \n을 포함하지 못하니까 +1까지 복사해야한다.
+	//memcpy(void * ptr, int value, size_t num)이라 ptr에서 value까지의 바이트 길이
+	//memcpy(f_name_copy, file_name, strlen(file_name) + 1);
+	//space가 여러개 있는거와 하나 있는거랑 상관없이 다 제거해야함
+	const char delimeter[] = " ";
+	//첫 word는 program name이다
+	//strtok을 통해서 얻는 정보는 command line의 각 단어의 위치 정보이다!!! 실제 string을 가지고 있는게 아니라 그 address를 담고 있다
+	//strtok_r을 하면 공백을 찾으면 이 자리에 null sentinel을 대신 넣어주게 된다 - 우리가 원하는 바 
+	char * save;
+	char * word_tokens = strtok_r(file_name, delimeter, &save);
+	char * program_name = word_tokens;
+	//command_line_args는 이 단어들의 위치정보를 array형태로 모아둔곳이다. 결국에 command_line_args[i]는 각 단어의 위치정보이기때문에 단어 자체는 아니다.
+	command_line_args[0] = program_name;
+	int parameter_index = 0;
+
+	//strtok이 NULL을 내뱉을때까지 loop안에서 토큰을 찾아야한다
+	//char * word_tokens;
+	while (word_tokens != NULL) {
+		parameter_index++;
+		word_tokens = strtok_r(NULL, delimeter, &save);
+		command_line_args[parameter_index] = word_tokens;
+	}
+
 	/* And then load the binary */
+	//_if와 file_name을 현재 프로세스에 로드한다 (성공: 1, 실패: 0)
+	//load 함수의 설명: Stores the executable's entry point into *RIP and its initial stack pointer into *RSP
 	success = load (file_name, &_if);
 
+	//가장 마지막으로 추가된 parameter부터 푸시가 되어야하니까 현재 command_line_args 포인터가 포인트하고 있는게 마지막으로 추가된 위치 + 1일것이다
+	//char *last_elem_index = command_line_args - 1;
+	//int로 카운트를 따라야하기때문에 parameter_index를 사용해서 오른쪽부터 왼쪽까지 iterate한다
+
+	//단어 데이터를 저장 해놓기 (order 상관없으니 그냥 첫 단어부터 넣기로 하자)
+	//null pointer sentinel도 있기 때문에 parameter_index부터 시작해서 strlen + 1만큼 loop해야한다
+	struct intr_frame * frame = &_if;
+	//command_line_args의 첫 element의 주소를 가르키게된다
+	char **words = command_line_args;
+	//오른쪽 (가장 마지막 parameter)부터 왼쪽 방향으로 스택에 push address of each string plus a null pointer sentinel (\0)
+	//'bar\0' 이런식으로 저장해줘야한다
+	char *word_stack_address[64];
+
+	for (int i = parameter_index - 1; i >= 0; i--) { 
+		//1. top of the stack에다가 각 단어들을 넣어줘야하고 이때 스택은 밑으로 grow한다 -- 스택 포인터가 커진다?
+		//x86-64에서는 %rsp 레지스터가 현재 스택의 가장 낮은 주소(Top의 주소)를 저장
+		//(pointer) -> (variable)으로 하면 포인터가 가르키고 있는 variable의 실제 정보를 가져온다
+		//void * stack_pointer = frame -> rsp;
+
+		//현재 command_line_args는 각 단어의 address를 담고 있는 포인터이고 우리는 단어 데이터 자체를 넣어주려고 하기 때문에
+		//words[i]는 ith argument의 정보를 담고 있는 포인터이다
+		//char** actual_word = words[i];
+		//void *: pointer to any data type
+		
+		//strlen에서 assertion 'string' failed 에러가 난다 -- 즉 words에 뭐가 안 담겨져 들어가는거 아닌가
+		frame -> rsp -= (strlen(command_line_args[i]) + 1);	
+		//스택에 자리를 만들어줘야 푸시가 가능하기때문에 스택 포인터를 밑으로 늘린다
+		//rsp가 가르키는 공간에다가 찾은 단어를 넣어줘야하기 때문에 실제 공간에 접근하고 단어를 단어의 길이만큼 만들어진 스택 공간에 넣어준다
+		//strcpy를 사용해서 src string을 dest에 복사해서 넣어주기 때문에 이걸 사용하자
+		strlcpy(frame -> rsp, command_line_args[i], strlen(command_line_args[i]) + 1);
+
+		//이 단어가 어느 스택주소에 저장되어있는지를 나중에 또 넣어줘야하기때문에 현재 rsp가 가르키는 주소를 저장해줘야한다
+		word_stack_address[i] = frame -> rsp;
+	}
+	//데이터를 Push 할 때는 %rsp의 값을 8만큼 감소시켜야 한다
+	//round the stack pointer down to a multiple of 8 before the first push
+	//void * current_rsp = _if.rsp;
+	while (frame -> rsp % 8 != 0) {
+		//printf("inside here");
+		frame -> rsp = frame->rsp - 1;
+		*(uint8_t *)frame -> rsp = 0;	//rsp가 가르키고 있는 공간에 0으로 채워넣는다
+	}
+
+	//null pointer sentinel 0을 char * 타입으로 스택에 푸시해줘야한다 (null terminating \0)
+	frame -> rsp -= 8;
+	//*current_rsp로 스택 포인터가 가르키고있는 실제 공간/데이터에 char * 인 0을 넣어줘야한다.
+	//0은 int타입으로 인식되기 때문에 NULL을 넣어놓는다 - 따라서 현재 이 위치에는 null pointer를 넣어준다
+	memset(frame -> rsp, 0, sizeof(char **));
+	//printf("added null pointer");
+
+	//이제 마지막 파라미터부터 시작해서 각 단어들이 지금 저장되어있는 위치를 스택에 추가한다
+	for (int i = parameter_index - 1; i >= 0; i--) {
+		//printf("loop for adding address");
+		frame -> rsp -= 8;
+		memcpy(frame -> rsp, &word_stack_address[i], sizeof(char *));
+	} 
+
+	//지금 순차적으로 addresss를 스택에 넣어줬기때문에 지금 current_stack_pointer가 결국에 argv[0]의 포인터를 담고 있다
+	//command_line의 첫 단어는 program name을 담고 있고 이를 가르키는 포인터를 %rsi에 저장해놓는다
+	frame -> R.rsi = frame -> rsp;
+	frame -> R.rdi = parameter_index;
+
+	//fake return address를 마지막으로 푸시해야하기때문에 그냥 0을 넣는다 -- 타임은 void (*) ()
+	frame -> rsp -= 8;
+	memset(frame -> rsp, 0, sizeof(void *));
+
+	hex_dump(_if.rsp , _if.rsp , USER_STACK - (uint64_t)_if.rsp, true);
+
 	/* If load failed, quit. */
+	//load를 끝내면 해당 메모리를 반환해야 한다
 	palloc_free_page (file_name);
+
 	if (!success)
 		return -1;
 
 	/* Start switched process. */
+	//load가 실행되면 context switching을 시킨다
 	do_iret (&_if);
 	NOT_REACHED ();
 }
@@ -204,6 +316,10 @@ process_wait (tid_t child_tid UNUSED) {
 	/* XXX: Hint) The pintos exit if process_wait (initd), we recommend you
 	 * XXX:       to add infinite loop here before
 	 * XXX:       implementing the process_wait. */
+	//bool temporary = true;
+	for (int i = 0; i < 1000000000; i++) {
+
+	}
 	return -1;
 }
 
@@ -330,6 +446,7 @@ load (const char *file_name, struct intr_frame *if_) {
 	int i;
 
 	/* Allocate and activate page directory. */
+	//현재 쓰레드의 pml4 생성 및 활성화 시킨다 
 	t->pml4 = pml4_create ();
 	if (t->pml4 == NULL)
 		goto done;
@@ -343,6 +460,7 @@ load (const char *file_name, struct intr_frame *if_) {
 	}
 
 	/* Read and verify executable header. */
+	//오픈한 파일을 읽는다 - elf 헤더의 크기만큼 ehdr에 읽고 정상적인지 확인
 	if (file_read (file, &ehdr, sizeof ehdr) != sizeof ehdr
 			|| memcmp (ehdr.e_ident, "\177ELF\2\1\1", 7)
 			|| ehdr.e_type != 2
@@ -355,6 +473,7 @@ load (const char *file_name, struct intr_frame *if_) {
 	}
 
 	/* Read program headers. */
+	//
 	file_ofs = ehdr.e_phoff;
 	for (i = 0; i < ehdr.e_phnum; i++) {
 		struct Phdr phdr;
@@ -366,7 +485,7 @@ load (const char *file_name, struct intr_frame *if_) {
 		if (file_read (file, &phdr, sizeof phdr) != sizeof phdr)
 			goto done;
 		file_ofs += sizeof phdr;
-		switch (phdr.p_type) {
+		switch (phdr.p_type) {	//phdr 하나씩 순회하면서 type이 PT_LOAD이면 로드 가능한 세그먼트라는것을 표시한다
 			case PT_NULL:
 			case PT_NOTE:
 			case PT_PHDR:
@@ -379,11 +498,11 @@ load (const char *file_name, struct intr_frame *if_) {
 			case PT_SHLIB:
 				goto done;
 			case PT_LOAD:
-				if (validate_segment (&phdr, file)) {
-					bool writable = (phdr.p_flags & PF_W) != 0;
-					uint64_t file_page = phdr.p_offset & ~PGMASK;
-					uint64_t mem_page = phdr.p_vaddr & ~PGMASK;
-					uint64_t page_offset = phdr.p_vaddr & PGMASK;
+				if (validate_segment (&phdr, file)) {	//phdr 각각은 세그먼트에 대한 정보를 가진다
+					bool writable = (phdr.p_flags & PF_W) != 0;	
+					uint64_t file_page = phdr.p_offset & ~PGMASK;	//file page 초기화
+					uint64_t mem_page = phdr.p_vaddr & ~PGMASK;		//memory page 초기화 (밑 12 바이트 버린다)
+					uint64_t page_offset = phdr.p_vaddr & PGMASK;	//page offset 초기화 - read_bytes, zero_bytes 계산에 쓰인다
 					uint32_t read_bytes, zero_bytes;
 					if (phdr.p_filesz > 0) {
 						/* Normal segment.
@@ -416,6 +535,7 @@ load (const char *file_name, struct intr_frame *if_) {
 
 	/* TODO: Your code goes here.
 	 * TODO: Implement argument passing (see project2/argument_passing.html). */
+	
 
 	success = true;
 
