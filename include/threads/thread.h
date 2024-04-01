@@ -118,12 +118,14 @@ struct thread {
 	/* Owned by userprog/process.c. */
 	uint64_t *pml4;                     /* Page map level 4 */
 
+#endif	
 	//user app을 사용할때 file descriptor table으로 파일에 접근할수있도록 한다 (현재 Unix은 모든것을 파일로 관리하고 있다 - 시스템 콜도)
 	//file descriptor table의 인덱스로 어떤 시스템 콜 또는 파일을 access하도록 한다
 	//각 쓰레드는 이 파일 테이블이 필요하고 프로세스에서 시스템 콜으로 파일을 열때마다 파일 인덱스가 하나씩 +1 된다
-	struct list file_descriptor_table[64]; //struct file을 가르키는 포인터를 여러개 가지고 있어 array형태로 되어있다
-	
-#endif	
+
+	//struct file을 가르키는 포인터를 여러개 가지고 있어 list로 만들어서 이 리스트의 index가 fd가 되도록 하고 content에는 파일을 가르키는 포인터를 넣어놓자	
+	struct list file_descriptor_table; 	//어떤 파일이 열려있는지 관리
+	struct file *executing_file;	//지금 쓰레드가 실행하고 있는 파일
 
 #ifdef VM
 	/* Table for whole virtual memory owned by thread. */

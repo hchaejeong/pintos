@@ -35,6 +35,9 @@ syscall_init (void) {
 	 * mode stack. Therefore, we masked the FLAG_FL. */
 	write_msr(MSR_SYSCALL_MASK,
 			FLAG_IF | FLAG_TF | FLAG_DF | FLAG_IOPL | FLAG_AC | FLAG_NT);
+	
+	//여러 프로세스가 같은 파일을 사용하지 않도록 락을 걸어놓자
+	lock_init(&file_lock);
 }
 
 /* The main system call interface */
@@ -68,7 +71,7 @@ syscall_handler (struct intr_frame *f UNUSED) {
 			f->R.rax = wait(arg1);
 			break;
 		case (SYS_CREATE):
-			f->R.rax = create(arg1);
+			f->R.rax = create(arg1, arg2);
 			break;
 		case (SYS_REMOVE):
 			f->R.rax = remove(arg1);
@@ -80,13 +83,13 @@ syscall_handler (struct intr_frame *f UNUSED) {
 			f->R.rax = filesize(arg1);
 			break;
 		case (SYS_READ):
-			f->R.rax = read(arg1);
+			f->R.rax = read(arg1, arg2, arg3);
 			break;
 		case (SYS_WRITE):
-			f->R.rax = write(arg1);
+			f->R.rax = write(arg1, arg2, arg3);
 			break;
 		case (SYS_SEEK):
-			seek(arg1);
+			seek(arg1, arg2);
 			break;
 		case (SYS_TELL):
 			f -> R.rax = tell(arg1);
@@ -108,25 +111,64 @@ halt(void) {
 }
 
 //Creates a new file called file initially initial_size bytes in size
+//파일을 만들뿐, 파일 여는것은 open 함수에서 한다
 bool 
 create (const char * file, unsigned initial_size) {
+	//일단 항상 현재 들어오는 파일 주소가 유효한지 체크를 한 후에 넘어가야한다
+	//check_bad_ptr(file);
+	//file descriptor table을 할당해줘야하니까 현재 진행중인 프로세스/쓰레드를 받아와서 진행해야함
+	struct thread * current_thread = thread_current();
+	struct list *file_table = &current_thread -> file_descriptor_table;
 	
+
+	//포인터를 지금 만들어준 file descriptor table로 지정해줘야함
+	//파일테이블에서의 fd0, fd1은 stdin, stdout으로 세이브해놓을거때문에 2부터 실제 파일을 넣어주도록
+
+	//synchronization을 위해서 lock_acquire를 통해 다른 프로세스 접근 못하게 막아놓은 다음에 파일은 만들어야한다
+	lock_acquire(&file_lock);
+	//이 filesys_create 함수가 파일이 성공적으로 생성될때만 true한 값을 내뱉기때문에 사실상 이게 결국에 이 시스템콜에서 리턴해야할 값이다
+	bool status = filesys_create(file, initial_size);
+	//lock_release로 다시 다른 프로세스도 사용가능하도록 풀어준다
+	lock_release(&file_lock);
+
+	return status;
 }
 
-
+//파일을 제거하는 함수 - open되어 있는 파일은 닫지 않고 그대로 그냥 켜진 상태로 남아있게된다
 bool
 remove (const char *file) {
+	//create랑 같은 로직인데 그냥 filesys_remove함수를 사용한다
+	lock_acquire(&file_lock);
+	bool status = filesys_remove(file);
+	lock_release(&file_lock);
 
+	return status;
 }
 
 //Opens the file called file. 
-//Returns a nonnegative integer handle called a "file descriptor" (fd), 
+//Returns a nonnegative integer  called a "file descriptor" (fd), 
 //or -1 if the file could not be opened.
 int
 open (const char * file) {
+	//fd0, fd1은 stdin, stdout을 위해 따로 빼둬야한다 -- 0이나 1을 리턴하는 경우는 없어야한다
+	struct thread *current_thread = thread_current();
+	struct list *curr_fdt = &current_thread -> file_descriptor_table;
+	if (list_empty(curr_fdt)) {
 
+	}
+
+	lock_acquire(&file_lock);
+	struct file *actual_file = filesys_open(file);
+	//각 프로세스마다 자신만의 file descriptors을 가지고 있다 - child processes
+
+	//파일을 새로 열때마다 fd를 하나씩 increment해줘야한다
+
+
+
+	lock_release(&file_lock);
 }
 
+//
 int
 filesize (int fd) {
 
