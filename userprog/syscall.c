@@ -41,6 +41,68 @@ syscall_init (void) {
 void
 syscall_handler (struct intr_frame *f UNUSED) {
 	// TODO: Your implementation goes here.
-	printf ("system call!\n");
-	thread_exit ();
+	// 여기서 이제, include/lib/syscall-nr.h를 보면 각 경우의 system call #을 알 수 있다.
+	// 그리고, 여기서부터는 레지스터를 사용해야 한다. 이건 include/threads/interrupt.h에 있다!
+	// intr_frame 안에는 register 모임?인 R이 있고, R 안에는 깃헙 io링크에 있는 %rax 이런애들이 다 있다!
+
+	switch (f->R.rax) {
+		// %rax는 system call number이라고 적혀있다
+		// include/lib/user/syscall.h에는 구현해야할 모든 경우?가 다 적혀있다.
+		// 레지스터의 순서는 %rdi, %rsi, %rdx, %r10, %r8, %r9임!
+		uint64_t arg1 = f->R.rdi;
+		uint64_t arg2 = f->R.rsi;
+		uint64_t arg3 = f->R.rdx;
+		case (SYS_HALT):
+			halt();
+			break;
+		case (SYS_EXIT):
+			exit(arg1);
+			break;
+		case (SYS_FORK):
+			f->R.rax = fork(arg1);
+			break;
+		case (SYS_EXEC):
+			exec(arg1);
+			break;
+		case (SYS_WAIT):
+			f->R.rax = wait(arg1);
+			break;
+		case (SYS_CREATE):
+			f->R.rax = create(arg1);
+			break;
+		case (SYS_REMOVE):
+			f->R.rax = remove(arg1);
+			break;
+		case (SYS_OPEN):
+			f->R.rax = open(arg1);
+			break;
+		case (SYS_FILESIZE):
+			f->R.rax = filesize(arg1);
+			break;
+		case (SYS_READ):
+			f->R.rax = read(arg1);
+			break;
+		case (SYS_WRITE):
+			f->R.rax = write(arg1);
+			break;
+		case (SYS_SEEK):
+			seek(arg1);
+			break;
+		case (SYS_TELL):
+			f -> R.rax = tell(arg1);
+			break;
+		case (SYS_CLOSE):
+			close(arg1);
+			break;
+		default:
+			printf ("system call!\n");
+			thread_exit ();
+	}
+	// printf ("system call!\n");
+	// thread_exit ();
+}
+
+void
+halt(void) {
+	power_off();
 }
