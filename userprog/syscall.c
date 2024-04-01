@@ -44,3 +44,53 @@ syscall_handler (struct intr_frame *f UNUSED) {
 	printf ("system call!\n");
 	thread_exit ();
 }
+
+//Creates a new file called file initially initial_size bytes in size
+bool 
+create (const char * file, unsigned initial_size) {
+	
+}
+
+
+bool
+remove (const char *file) {
+
+}
+
+//Opens the file called file. 
+//Returns a nonnegative integer handle called a "file descriptor" (fd), 
+//or -1 if the file could not be opened.
+int
+open (const char * file) {
+
+}
+
+int
+filesize (int fd) {
+
+}
+
+int
+read (int fd, void *buffer, unsigned size) {
+
+}
+
+int
+write (int fd, const void *buffer, unsigned size) {
+
+}
+
+void
+seek (int fd, unsigned position) {
+
+}
+
+unsigned
+tell (int fd) {
+
+}
+
+void
+close (int fd) {
+
+}
