@@ -124,8 +124,10 @@ struct thread {
 	//각 쓰레드는 이 파일 테이블이 필요하고 프로세스에서 시스템 콜으로 파일을 열때마다 파일 인덱스가 하나씩 +1 된다
 
 	//struct file을 가르키는 포인터를 여러개 가지고 있어 list로 만들어서 이 리스트의 index가 fd가 되도록 하고 content에는 파일을 가르키는 포인터를 넣어놓자	
-	struct list file_descriptor_table; 	//어떤 파일이 열려있는지 관리
-	struct file *executing_file;	//지금 쓰레드가 실행하고 있는 파일
+	//결국 이 file_descriptor_table은 fd_structure (fd_index랑 파일 포인터를 가지고 있는 struct)의 테이블이다
+	//따라서, 각 fd_structure를 tracking하고 쉽게 빼올수있기 위해선
+	struct list file_descriptor_table; 	//각각 파일을 포인트하고 있는 원소들의 리스트 형태로 관리해둔다
+	int curr_fd;	//지금 쓰레드가 실행하고 있는 파일이 들어가있는 fd 인덱스
 
 #ifdef VM
 	/* Table for whole virtual memory owned by thread. */

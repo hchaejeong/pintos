@@ -118,8 +118,6 @@ create (const char * file, unsigned initial_size) {
 	//check_bad_ptr(file);
 	//file descriptor table을 할당해줘야하니까 현재 진행중인 프로세스/쓰레드를 받아와서 진행해야함
 	struct thread * current_thread = thread_current();
-	struct list *file_table = &current_thread -> file_descriptor_table;
-	
 
 	//포인터를 지금 만들어준 file descriptor table로 지정해줘야함
 	//파일테이블에서의 fd0, fd1은 stdin, stdout으로 세이브해놓을거때문에 2부터 실제 파일을 넣어주도록
@@ -151,27 +149,69 @@ remove (const char *file) {
 int
 open (const char * file) {
 	//fd0, fd1은 stdin, stdout을 위해 따로 빼둬야한다 -- 0이나 1을 리턴하는 경우는 없어야한다
-	struct thread *current_thread = thread_current();
-	struct list *curr_fdt = &current_thread -> file_descriptor_table;
-	if (list_empty(curr_fdt)) {
+	lock_acquire(&file_lock);
 
+	struct thread *current_thread = thread_current();
+
+	struct list *curr_fdt = &current_thread -> file_descriptor_table;
+	bool fdt_empty = false;
+	struct fd_structure *fd_elem = calloc(1, sizeof(struct fd_structure));
+	if (fd_elem != NULL) {
+		if (list_empty(curr_fdt)) {
+			fd_elem->fd_index = 2;
+			fdt_empty = true;
+		}
+	} else {
+		return -1;		//새로운 파일 열 공간이 부족한 경우 open되지 않기 때문에 -1을 리턴한다.
 	}
 
-	lock_acquire(&file_lock);
+	
 	struct file *actual_file = filesys_open(file);
+	if (!actual_file) {		//파일을 열지 못한 경우
+		free (fd_elem);		//할당한 공간을 사용하지 않았기 때문에 다시 free해줘서 다른 애들이 쓸 수 있게 해준다.
+		lock_release(&file_lock);
+		return -1;
+	}
+
+	//파일이 제대로 잘 열렸으면 지금 fd 원소의 파일에 저장해놓는다
+	fd_elem->current_file = actual_file;
 	//각 프로세스마다 자신만의 file descriptors을 가지고 있다 - child processes
-
-	//파일을 새로 열때마다 fd를 하나씩 increment해줘야한다
-
+	//현재 fdt 리스트의 맨 뒤에 넣기 때문에 현재 최대 index보다 1을 increment해줘야한다.
+	if (!fdt_empty) {
+		int prev_index = list_entry(list_back(curr_fdt), struct fd_structure, elem)->fd_index;
+		fd_elem->fd_index = prev_index + 1;
+	}
+	//파일을 새로 열때마다 리스트에다가 추가해줘야하니까 맨 끝에 푸시를 해준다
+	struct list_elem curr_elem = fd_elem->elem;
+	list_push_back(curr_fdt, &curr_elem);
 
 
 	lock_release(&file_lock);
+
+	//lock release한 다음에 결과를 반환해줘야한다
+	return fd_elem->fd_index;
 }
 
-//
+//off_t file_length(struct file *file)함수를 사용한다
+//fd에 있는 파일의 사이즈를 반환
 int
 filesize (int fd) {
+	int size = 0;
+	lock_acquire(&file_lock);
 
+	//저 file_length함수를 쓰기 위해서는 struct file *형태인 주어진 fd에 있는 파일을 가져와서 이거에 저 함수를 돌려야된다
+	//따라서 우리 파일 테이블 리스트에서 fd 위치에 있는 것을 뽑아와야한다 -- 이걸 해주는 새로운 함수를 만들자
+	struct fd_structure *fd_elem = find_by_fd_index(fd);
+	if (fd_elem == NULL) {
+		//찾지 못한거기때문에 -1을 반환시킨다
+		size = -1;
+	} else {
+		size = file_length(fd_elem->current_file);
+	}
+
+	lock_release(&file_lock);
+
+	return size;
 }
 
 int
@@ -194,7 +234,33 @@ tell (int fd) {
 
 }
 
+//close file descriptor fd
 void
 close (int fd) {
+	lock_acquire(&file_lock);
 
+	
+
+
+	lock_release(&file_lock);
+}
+
+struct fd_structure*
+find_by_fd_index(int fd) {
+	lock_acquire(&file_lock);
+
+	struct thread *current_thread = thread_current();
+	struct list *curr_fdt = &current_thread -> file_descriptor_table;
+	struct fd_structure *curr_fd_elem = list_entry(list_front(curr_fdt), struct fd_structure, elem);
+	while (curr_fd_elem != list_end(curr_fdt)) {
+		if (curr_fd_elem -> fd_index == fd) {
+			//그럼 이 fd원소가 찾아진거기때문에 이 fd_structure element를 반환한다
+			return curr_fd_elem;
+		}
+
+		curr_fd_elem = list_next(curr_fdt);
+	}
+
+	//다 찾아봤는데 없으면 NULL을 반환하도록
+	return NULL;
 }
