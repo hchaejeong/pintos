@@ -65,7 +65,7 @@ syscall_handler (struct intr_frame *f UNUSED) {
 			exit(arg1);
 			break;
 		case (SYS_FORK):
-			f->R.rax = fork(arg1);
+			f->R.rax = fork(arg1, f);
 			break;
 		case (SYS_EXEC):
 			exec(arg1);
@@ -355,4 +355,24 @@ find_by_fd_index(int fd) {
 
 	//다 찾아봤는데 없으면 NULL을 반환하도록
 	return NULL;
+}
+
+void
+exit (int status) {
+	thread_exit();
+}
+
+tid_t
+fork (const char *thread_name, struct intr_frame *f) {
+	return process_fork(thread_name, f);
+}
+
+int
+exec (const char *file) {
+	return 0;
+}
+
+int
+wait(tid_t pid) {
+	return process_wait(pid);
 }
