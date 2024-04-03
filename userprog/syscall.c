@@ -15,6 +15,11 @@
 void syscall_entry (void);
 void syscall_handler (struct intr_frame *);
 
+void exit(int status);
+tid_t fork (const char *thread_name, struct intr_frame *f);
+int exec (const char *file);
+int wait(tid_t pid);
+
 /* System call.
  *
  * Previously system call services was handled by the interrupt handler

@@ -33,9 +33,9 @@ unsigned tell (int fd);
 void close (int fd);
 struct fd_structure* find_by_fd_index(int fd);
 
-void exit(int status);
-tid_t fork (const char *thread_name, struct intr_frame *f);
-int exec (const char *file);
-int wait(tid_t pid);
+// void exit(int status);
+// tid_t fork (const char *thread_name, struct intr_frame *f);
+// int exec (const char *file);
+// int wait(tid_t pid);
 
 #endif /* userprog/syscall.h */
