@@ -128,6 +128,7 @@ struct thread {
 	//따라서, 각 fd_structure를 tracking하고 쉽게 빼올수있기 위해선
 	struct list file_descriptor_table; 	//각각 파일을 포인트하고 있는 원소들의 리스트 형태로 관리해둔다
 	int curr_fd;	//지금 쓰레드가 실행하고 있는 파일이 들어가있는 fd 인덱스
+	struct file *executing_file;
 
 #ifdef VM
 	/* Table for whole virtual memory owned by thread. */

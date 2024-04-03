@@ -1,11 +1,14 @@
 #include "userprog/syscall.h"
 #include <stdio.h>
 #include <syscall-nr.h>
+#include <stdlib.h>
 #include "threads/interrupt.h"
 #include "threads/thread.h"
 #include "threads/loader.h"
 #include "userprog/gdt.h"
 #include "threads/flags.h"
+#include "filesys/file.h"
+#include "filesys/filesys.h"
 #include "intrinsic.h"
 
 void syscall_entry (void);
@@ -214,33 +217,120 @@ filesize (int fd) {
 	return size;
 }
 
+//fd의 파일에서 size bytes을 읽고 buffer에 넣는다
+//실제로 읽은 byte 사이즈를 반환하고 파일을 읽지 못한 경우에는 -1을 반환시킨다
 int
 read (int fd, void *buffer, unsigned size) {
+	int read_bytes = 0;
+	lock_acquire(&file_lock);
 
+	//fd가 0이면 파일에서 읽지 않고 keyboard에서 input_getc()로 input을 읽어야한다
+	if (fd == 0) {
+		uint8_t key = input_getc();	 //user가 입력하도록 기다리고 입력하는 키보드 key를 반환한다
+
+	}
+
+	struct fd_structure *fd_elem = find_by_fd_index(fd);
+	if (fd_elem == NULL) {
+		read_bytes = -1;
+	} else {
+		//지금 fd에 맞는 파일을 뽑아오고 이 파일을 읽어줘야한다
+		struct file *curr_file = fd_elem->current_file;
+		read_bytes = (int) file_read(curr_file, buffer, size);
+	}
+
+	lock_release(&file_lock);
+
+	return read_bytes;
 }
 
+//buffer에서 size bytes를 fd의 파일에다가 쓰는 함수
+//실제로 써지는 byte만큼을 반환한다 - 안 써지는 byte들도 있을수 있기 때문에 size 보다 더 작은 반환값이 나올수있따
 int
 write (int fd, const void *buffer, unsigned size) {
+	int write_bytes = 0;
+	lock_acquire(&file_lock);
 
+	//fd가 1이면 stdout 시스템 콜이기 떄문에 putbuf()을 이용해서 콘솔에다가 적어줘야한다
+	if (fd == 1) {
+		//should write all of buffer in one call
+		//대신 버퍼 사이즈가 너무 크면 좀 나눠서 쓰도록 한다
+		putbuf(buffer, size);
+		//이 경우에는 콘솔에 우리가 버퍼를 다 쓸 수 있으니 결국 원래 size만큼 쓴다
+		write_bytes = size;
+	}
+
+	//파일 용량을 끝났으면 원래는 파일을 더 늘려서 마저 쓰겠지만 여기서는 그냥 파일의 마지막주소까지 쓰고 여기까지 썼을때의 총 byte개수를 반환시킨다
+	struct fd_structure *fd_elem = find_by_fd_index(fd);
+	if (fd_elem == NULL) {
+		write_bytes = -1;
+	} else {
+		struct file *curr_file = fd_elem->current_file;
+		write_bytes = (int) file_write(curr_file, buffer, size);	//off_t 타입으로 나와니까 int으로 만들어주고 반환
+	}
+
+	lock_release(&file_lock);
+
+	return write_bytes;
 }
 
+//fd의 파일이 다음으로 읽거나 쓸 next byte을 position으로 바꿔주는 void 함수
 void
 seek (int fd, unsigned position) {
+	lock_acquire(&file_lock);
+	struct fd_structure *fd_elem = find_by_fd_index(fd);
+	if (fd_elem == NULL) {
+		lock_release(&file_lock);
+		return;
+	} else {
+		struct file *curr_file = fd_elem->current_file;
+		file_seek(curr_file, position);
+	}
 
+	lock_release(&file_lock);
 }
 
+//주어진 fd에 있는 파일에서 읽거나 쓸 다음 byte의 주소를 반환한다 
+//returns position of the next byte to be read/wrtie
+//파일의 beginning을 기준으로 byte로 알려준다
 unsigned
-tell (int fd) {
+tell (int fd) {	
+	unsigned result = -1;
+	lock_acquire(&file_lock);
 
+	struct fd_structure *fd_elem = find_by_fd_index(fd);
+	//fd의 파일이 존재하지 않는경우 0을 반환한ㄷ
+	if (fd_elem == NULL) {
+		result = -1;
+	} else {
+		struct file *curr_file = fd_elem -> current_file;
+		result = file_tell(curr_file);
+	}	
+
+	lock_release(&file_lock);
+
+	return result;
 }
 
 //close file descriptor fd
+//void file_close(struct file *file)을 사용하려면 fd에 맞는 file을 찾아내고 그걸 넘겨줘야한다
 void
 close (int fd) {
 	lock_acquire(&file_lock);
 
-	
-
+	struct fd_structure *fd_elem = find_by_fd_index(fd);
+	if (fd_elem == NULL) {
+		lock_release(&file_lock);
+		return;
+	} else {
+		struct file *curr_file = fd_elem->current_file;
+		file_close(curr_file);
+		//파일을 열떄 file descriptor table에서 이 파일을 위한 자리/메모리를 할당해주었고
+		//우리는 각 파일 원소들을 thread안에 리스트로 관리하고 있기 때문에 이 리스트에서 없애주고 할당된 공간도 없애줘야한다
+		struct list_elem curr_elem = fd_elem->elem;
+		list_remove(&curr_elem);
+		free(fd_elem);
+	}
 
 	lock_release(&file_lock);
 }
@@ -251,14 +341,16 @@ find_by_fd_index(int fd) {
 
 	struct thread *current_thread = thread_current();
 	struct list *curr_fdt = &current_thread -> file_descriptor_table;
-	struct fd_structure *curr_fd_elem = list_entry(list_front(curr_fdt), struct fd_structure, elem);
-	while (curr_fd_elem != list_end(curr_fdt)) {
+	struct list_elem *curr_elem = list_begin(curr_fdt);
+	
+	while (curr_elem != list_end(curr_fdt)) {
+		struct fd_structure *curr_fd_elem = list_entry(curr_elem, struct fd_structure, elem);
 		if (curr_fd_elem -> fd_index == fd) {
 			//그럼 이 fd원소가 찾아진거기때문에 이 fd_structure element를 반환한다
 			return curr_fd_elem;
 		}
 
-		curr_fd_elem = list_next(curr_fdt);
+		curr_elem = list_next(curr_fdt);
 	}
 
 	//다 찾아봤는데 없으면 NULL을 반환하도록
