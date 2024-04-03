@@ -174,6 +174,8 @@ process_exec (void *f_name) {
 	 * This is because when current thread rescheduled,
 	 * it stores the execution information to the member. */
 	//user프로그램을 실행할때 필요한 정보를 포함 - stores the registers of the user space
+	//interrupt frame은 인터럽트가 호출되었을때 이전에 레지스터에 작업하던 context 정보를 스택에 담는 구조체
+	//커널모드에서 유저모드로 바뀔때 결국 interrupt가 발생하기 때문에 유저스택을 가지고 오기 위해 커널 스택내에서 이 intr frame을 만들어서 받아와야한다
 	struct intr_frame _if;
 	_if.ds = _if.es = _if.ss = SEL_UDSEG;
 	_if.cs = SEL_UCSEG;
@@ -224,6 +226,7 @@ process_exec (void *f_name) {
 	//char *last_elem_index = command_line_args - 1;
 	//int로 카운트를 따라야하기때문에 parameter_index를 사용해서 오른쪽부터 왼쪽까지 iterate한다
 
+	//유저가 요청한 프로세스를 수행하기 위한 interrupt frame 구조체 내 정보를 유저 커널 스택에 쌓는다
 	//단어 데이터를 저장 해놓기 (order 상관없으니 그냥 첫 단어부터 넣기로 하자)
 	//null pointer sentinel도 있기 때문에 parameter_index부터 시작해서 strlen + 1만큼 loop해야한다
 	struct intr_frame * frame = &_if;
@@ -296,7 +299,7 @@ process_exec (void *f_name) {
 		return -1;
 
 	/* Start switched process. */
-	//load가 실행되면 context switching을 시킨다
+	//do_iret을 통해서 실제로 사용자 프로세스로 넘어가게 된다 
 	do_iret (&_if);
 	NOT_REACHED ();
 }
@@ -331,6 +334,7 @@ process_exit (void) {
 	 * TODO: Implement process termination message (see
 	 * TODO: project2/process_termination.html).
 	 * TODO: We recommend you to implement process resource cleanup here. */
+	
 
 	process_cleanup ();
 }
@@ -535,7 +539,10 @@ load (const char *file_name, struct intr_frame *if_) {
 
 	/* TODO: Your code goes here.
 	 * TODO: Implement argument passing (see project2/argument_passing.html). */
-	
+	//오픈된 파일에는 write가 일어나지 않도록 deny file write을 해줘야한다
+	file_deny_write(file);
+	//deny write으로 막아놓은 다음에 파일을 실행시킬수있도록
+	t -> executing_file = file;
 
 	success = true;
 
