@@ -373,8 +373,28 @@ fork (const char *thread_name, struct intr_frame *f) {
 	return process_fork(thread_name, f);
 }
 
+bool
+addr_check(void *address) {
+	// 지금은 user의 addr에 배치되어야 있어야 하고, page가 할당된 상태어야 함
+	//return is_user_vaddr(address);
+	return is_user_vaddr(address) && (pml4_get_page(thread_current()->pml4, address) != NULL);
+}
+
 int
 exec (const char *file) {
+	// gitbook에 적힌 내용 요약
+	// 거기서는 cmd_line이지만, 결국에는 file name으로 들어갈 것임
+	// 성공하면 아무것도 return하지 않고, 오류나면 exit -1로 종료함
+	// exec라는 이름의 thread의 이름을 바꾸지 않음
+	// fd는 exec call 상황에서 open 상태로 남아있음
+
+	// 일단 먼저 뭐든 간에 올바른 address인지 check하는 과정이 필요함.
+	if (!addr_check(file)) {
+		exit(-1);
+	}
+
+	//process_exec()
+
 	return 0;
 }
 
@@ -382,5 +402,3 @@ int
 wait(tid_t pid) {
 	return process_wait(pid);
 }
-
-// git merge 위한
