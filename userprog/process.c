@@ -331,7 +331,6 @@ process_exit (void) {
 	 * TODO: Implement process termination message (see
 	 * TODO: project2/process_termination.html).
 	 * TODO: We recommend you to implement process resource cleanup here. */
-	
 
 	process_cleanup ();
 }
@@ -536,8 +535,7 @@ load (const char *file_name, struct intr_frame *if_) {
 
 	/* TODO: Your code goes here.
 	 * TODO: Implement argument passing (see project2/argument_passing.html). */
-	//오픈된 파일에는 write가 일어나지 않도록 deny file write을 해줘야한다
-	file_deny_write(file);
+	
 
 	success = true;
 
