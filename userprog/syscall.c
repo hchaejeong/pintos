@@ -68,7 +68,7 @@ syscall_handler (struct intr_frame *f UNUSED) {
 			f->R.rax = wait(arg1);
 			break;
 		case (SYS_CREATE):
-			f->R.rax = create(arg1);
+			f->R.rax = create(arg1, arg2);
 			break;
 		case (SYS_REMOVE):
 			f->R.rax = remove(arg1);
@@ -80,13 +80,13 @@ syscall_handler (struct intr_frame *f UNUSED) {
 			f->R.rax = filesize(arg1);
 			break;
 		case (SYS_READ):
-			f->R.rax = read(arg1);
+			f->R.rax = read(arg1, arg2, arg3);
 			break;
 		case (SYS_WRITE):
-			f->R.rax = write(arg1);
+			f->R.rax = write(arg1, arg2, arg3);
 			break;
 		case (SYS_SEEK):
-			seek(arg1);
+			seek(arg1, arg2);
 			break;
 		case (SYS_TELL):
 			f -> R.rax = tell(arg1);
