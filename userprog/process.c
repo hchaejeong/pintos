@@ -22,6 +22,8 @@
 #include "vm/vm.h"
 #endif
 
+//struct lock *file_lock;
+
 static void process_cleanup (void);
 static bool load (const char *file_name, struct intr_frame *if_);
 static void initd (void *f_name);
@@ -220,7 +222,7 @@ process_exec (void *f_name) {
 	/* And then load the binary */
 	//_if와 file_name을 현재 프로세스에 로드한다 (성공: 1, 실패: 0)
 	//load 함수의 설명: Stores the executable's entry point into *RIP and its initial stack pointer into *RSP
-	success = load (file_name, &_if);
+	success = load (program_name, &_if);
 
 	//가장 마지막으로 추가된 parameter부터 푸시가 되어야하니까 현재 command_line_args 포인터가 포인트하고 있는게 마지막으로 추가된 위치 + 1일것이다
 	//char *last_elem_index = command_line_args - 1;
@@ -334,7 +336,6 @@ process_exit (void) {
 	 * TODO: Implement process termination message (see
 	 * TODO: project2/process_termination.html).
 	 * TODO: We recommend you to implement process resource cleanup here. */
-	
 
 	process_cleanup ();
 }
@@ -539,6 +540,7 @@ load (const char *file_name, struct intr_frame *if_) {
 
 	/* TODO: Your code goes here.
 	 * TODO: Implement argument passing (see project2/argument_passing.html). */
+   
 	//오픈된 파일에는 write가 일어나지 않도록 deny file write을 해줘야한다
 	file_deny_write(file);
 	//deny write으로 막아놓은 다음에 파일을 실행시킬수있도록
