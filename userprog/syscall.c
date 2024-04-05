@@ -20,6 +20,8 @@ struct lock file_lock;
 void syscall_entry (void);
 void syscall_handler (struct intr_frame *);
 
+void check_address(void *address);
+
 void halt(void);
 bool create (const char * file, unsigned initial_size);
 bool remove (const char *file);
@@ -62,7 +64,7 @@ syscall_init (void) {
 			FLAG_IF | FLAG_TF | FLAG_DF | FLAG_IOPL | FLAG_AC | FLAG_NT);
 	
 	//여러 프로세스가 같은 파일을 사용하지 않도록 락을 걸어놓자
-	//lock_init(&file_lock);
+	lock_init(&file_lock);
 }
 
 /* The main system call interface */
@@ -72,7 +74,7 @@ syscall_handler (struct intr_frame *f UNUSED) {
 	// 여기서 이제, include/lib/syscall-nr.h를 보면 각 경우의 system call #을 알 수 있다.
 	// 그리고, 여기서부터는 레지스터를 사용해야 한다. 이건 include/threads/interrupt.h에 있다!
 	// intr_frame 안에는 register 모임?인 R이 있고, R 안에는 깃헙 io링크에 있는 %rax 이런애들이 다 있다!
-
+	//NOT_REACHED();
 	switch (f->R.rax) {
 		// %rax는 system call number이라고 적혀있다
 		// include/lib/user/syscall.h에는 구현해야할 모든 경우?가 다 적혀있다.
@@ -80,48 +82,49 @@ syscall_handler (struct intr_frame *f UNUSED) {
 		uint64_t arg1 = f->R.rdi;
 		uint64_t arg2 = f->R.rsi;
 		uint64_t arg3 = f->R.rdx;
+
 		case (SYS_HALT):
 			halt();
 			break;
 		case (SYS_EXIT):
 			//printf("여기는 들어오나?\n");
-			exit(arg1);
+			exit(f->R.rdi);
 			break;
 		case (SYS_FORK):
-			f->R.rax = fork((char *) arg1, f);
+			f->R.rax = fork((char *) f->R.rdi, f);
 			break;
 		case (SYS_EXEC):
-			f->R.rax = exec((char *) arg1);
+			f->R.rax = exec((char *) f->R.rdi);
 			break;
 		case (SYS_WAIT):
-			f->R.rax = wait((tid_t) arg1);
+			f->R.rax = wait((tid_t) f->R.rdi);
 			break;
 		case (SYS_CREATE):
-			f->R.rax = create((char *) arg1, (unsigned) arg2);
+			f->R.rax = create((char *) f->R.rdi, (unsigned) f->R.rsi);
 			break;
 		case (SYS_REMOVE):
-			f->R.rax = remove((char *) arg1);
+			f->R.rax = remove((char *) f->R.rdi);
 			break;
 		case (SYS_OPEN):
-			f->R.rax = open((char *) arg1);
+			f->R.rax = open((char *) f->R.rdi);
 			break;
 		case (SYS_FILESIZE):
-			f->R.rax = filesize((int) arg1);
+			f->R.rax = filesize((int) f->R.rdi);
 			break;
 		case (SYS_READ):
-			f->R.rax = read((int) arg1, (void *) arg2, (unsigned) arg3);
+			f->R.rax = read((int) f->R.rdi, (void *) f->R.rsi, (unsigned) f->R.rdx);
 			break;
 		case (SYS_WRITE):
-			f->R.rax = write((int) arg1, (void *) arg2, (unsigned) arg3);
+			f->R.rax = write((int) f->R.rdi, (void *) f->R.rsi, (unsigned) f->R.rdx);
 			break;
 		case (SYS_SEEK):
-			seek((int) arg1, (unsigned) arg2);
+			seek((int) f->R.rdi, (unsigned) f->R.rsi);
 			break;
 		case (SYS_TELL):
-			f -> R.rax = tell((int)arg1);
+			f -> R.rax = tell((int)f->R.rdi);
 			break;
 		case (SYS_CLOSE):
-			close((int) arg1);
+			close((int) f->R.rdi);
 			break;
 		default:
 			printf ("system call!\n");
@@ -137,9 +140,17 @@ void
 check_address(void *address) {
 	if (address >= LOADER_PHYS_BASE && lock_held_by_current_thread(&file_lock)) {
 		lock_release(&file_lock);
+		exit(-1);
+		NOT_REACHED();
 	}
-	exit(-1);
-	NOT_REACHED();
+
+	if (address == NULL) {
+		exit(-1);
+	}
+
+	if (is_kernel_vaddr(address)) {
+		exit(-1);
+	}
 }
 
 void
@@ -291,26 +302,33 @@ int
 write (int fd, const void *buffer, unsigned size) {
 	check_address(buffer);
 	check_address(buffer + size - 1);
+	//printf("doing write syscall");
 
 	int write_bytes = 0;
+	
 	lock_acquire(&file_lock);
 
+	
 	//fd가 1이면 stdout 시스템 콜이기 떄문에 putbuf()을 이용해서 콘솔에다가 적어줘야한다
-	if (fd == 1) {
+	if (fd == 0) {
+		lock_release(&file_lock);
+		return -1;
+	} else if (fd == 1) {
 		//should write all of buffer in one call
 		//대신 버퍼 사이즈가 너무 크면 좀 나눠서 쓰도록 한다
+		//NOT_REACHED();
 		putbuf(buffer, size);
 		//이 경우에는 콘솔에 우리가 버퍼를 다 쓸 수 있으니 결국 원래 size만큼 쓴다
 		write_bytes = size;
-	}
-  
-	//파일 용량을 끝났으면 원래는 파일을 더 늘려서 마저 쓰겠지만 여기서는 그냥 파일의 마지막주소까지 쓰고 여기까지 썼을때의 총 byte개수를 반환시킨다
-	struct fd_structure *fd_elem = find_by_fd_index(fd);
-	if (fd_elem == NULL) {
-		write_bytes = -1;
 	} else {
-		struct file *curr_file = fd_elem->current_file;
-		write_bytes = (int) file_write(curr_file, buffer, size);	//off_t 타입으로 나와니까 int으로 만들어주고 반환
+		//파일 용량을 끝났으면 원래는 파일을 더 늘려서 마저 쓰겠지만 여기서는 그냥 파일의 마지막주소까지 쓰고 여기까지 썼을때의 총 byte개수를 반환시킨다
+		struct fd_structure *fd_elem = find_by_fd_index(fd);
+		if (fd_elem == NULL) {
+			write_bytes = -1;
+		} else {
+			struct file *curr_file = fd_elem->current_file;
+			write_bytes = (int) file_write(curr_file, buffer, size);	//off_t 타입으로 나와니까 int으로 만들어주고 반환
+		}
 	}
 
 	lock_release(&file_lock);
