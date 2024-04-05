@@ -335,6 +335,11 @@ process_exit (void) {
 	 * TODO: project2/process_termination.html).
 	 * TODO: We recommend you to implement process resource cleanup here. */
 	
+	// termination message를 확인해보니
+	/* (exit) begin
+		exit: exit(57) */
+	// 이런 식으로 뜬다. 그러면 exit 숫자를 그대로 적으면 되는건가!
+	printf("%s: exit(%d)\n", curr->name, curr->exit_num);
 
 	process_cleanup ();
 }

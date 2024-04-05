@@ -11,6 +11,8 @@
 #include "filesys/filesys.h"
 #include "intrinsic.h"
 #include "userprog/process.h"
+#include "threads/palloc.h"
+#include "threads/synch.h"
 
 void syscall_entry (void);
 void syscall_handler (struct intr_frame *);
@@ -46,7 +48,7 @@ syscall_init (void) {
 			FLAG_IF | FLAG_TF | FLAG_DF | FLAG_IOPL | FLAG_AC | FLAG_NT);
 	
 	//여러 프로세스가 같은 파일을 사용하지 않도록 락을 걸어놓자
-	lock_init(&file_lock);
+	//lock_init(&file_lock);
 }
 
 /* The main system call interface */
@@ -68,6 +70,7 @@ syscall_handler (struct intr_frame *f UNUSED) {
 			halt();
 			break;
 		case (SYS_EXIT):
+			//printf("여기는 들어오나?\n");
 			exit(arg1);
 			break;
 		case (SYS_FORK):
@@ -365,6 +368,8 @@ find_by_fd_index(int fd) {
 
 void
 exit (int status) {
+	//printf("status: %d\n", status);
+	thread_current()->exit_num = status;
 	thread_exit();
 }
 
@@ -376,8 +381,11 @@ fork (const char *thread_name, struct intr_frame *f) {
 bool
 addr_check(void *address) {
 	// 지금은 user의 addr에 배치되어야 있어야 하고, page가 할당된 상태어야 함
-	//return is_user_vaddr(address);
+	// return is_user_vaddr(address);
+	// 괜찮으면 true return, 안괜찮으면 false return
 	return is_user_vaddr(address) && (pml4_get_page(thread_current()->pml4, address) != NULL);
+	//return !is_kernel_vaddr(address) && (pml4_get_page(thread_current()->pml4, address) != NULL);
+	//return (is_kernel_vaddr(address) || pml4_get_page(thread_current()->pml4, address) == NULL);
 }
 
 int
@@ -389,12 +397,28 @@ exec (const char *file) {
 	// fd는 exec call 상황에서 open 상태로 남아있음
 
 	// 일단 먼저 뭐든 간에 올바른 address인지 check하는 과정이 필요함.
+	printf("addr check: %d\n", !addr_check(file));
 	if (!addr_check(file)) {
+		//printf("addr check: %d\n", addr_check(file));
+		printf("이거 때문인가\n"); // 이거 때문이네...
 		exit(-1);
 	}
+	// process_create_initd에서 strlcpy 썼던 것처럼 이름을 복사해서, 그 이름으로 exec 시킨다!
+	// 일단 하나 page를 할당받고, 이상하면 exit.
+	//char *file_name = palloc_get_page(0);
+	char *file_name = palloc_get_page(PAL_ZERO);
+	int file_size = strlen(file) + 1;
+	if (file_name == NULL) {
+		exit(-1);
+	} else {
+		strlcpy(file_name, file, file_size);
+		if (process_exec(file_name) == -1) {
+			exit(-1);
+			//return -1;
+		}
+	}
 
-	//process_exec()
-
+	NOT_REACHED(); // 이 명령어를 넣어야 이 명령어의 도달 여부를 알 수 있음
 	return 0;
 }
 
