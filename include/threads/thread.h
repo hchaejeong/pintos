@@ -129,6 +129,8 @@ struct thread {
 	int curr_fd;	//지금 쓰레드가 실행하고 있는 파일이 들어가있는 fd 인덱스
 	struct file *executing_file;
 
+	int exit_num; // exit할 때 어떤 exit인지 적어줘야 함
+
 #ifdef VM
 	/* Table for whole virtual memory owned by thread. */
 	struct supplemental_page_table spt;

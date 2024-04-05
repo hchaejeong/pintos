@@ -861,6 +861,9 @@ init_thread (struct thread *t, const char *name, int priority) {
 	t->nice = running_thread()->nice;
 	t->recent_cpu = running_thread()->recent_cpu;
 
+	// exit num도 init해야함
+	t->exit_num = 0;
+
 }
 
 /* Chooses and returns the next thread to be scheduled.  Should
