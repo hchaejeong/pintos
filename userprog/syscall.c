@@ -172,6 +172,7 @@ create (const char * file, unsigned initial_size) {
 bool
 remove (const char *file) {
 	check_address(file);
+  
 	//create랑 같은 로직인데 그냥 filesys_remove함수를 사용한다
 	lock_acquire(&file_lock);
 	bool status = filesys_remove(file);
@@ -222,8 +223,8 @@ open (const char * file) {
 	//파일을 새로 열때마다 리스트에다가 추가해줘야하니까 맨 끝에 푸시를 해준다
 	struct list_elem curr_elem = fd_elem->elem;
 	list_push_back(curr_fdt, &curr_elem);
-
-
+  
+  
 	lock_release(&file_lock);
 
 	//lock release한 다음에 결과를 반환해줘야한다
@@ -236,7 +237,7 @@ int
 filesize (int fd) {
 	int size = 0;
 	lock_acquire(&file_lock);
-
+  
 	//저 file_length함수를 쓰기 위해서는 struct file *형태인 주어진 fd에 있는 파일을 가져와서 이거에 저 함수를 돌려야된다
 	//따라서 우리 파일 테이블 리스트에서 fd 위치에 있는 것을 뽑아와야한다 -- 이걸 해주는 새로운 함수를 만들자
 	struct fd_structure *fd_elem = find_by_fd_index(fd);
@@ -246,7 +247,7 @@ filesize (int fd) {
 	} else {
 		size = file_length(fd_elem->current_file);
 	}
-
+  
 	lock_release(&file_lock);
 
 	return size;
@@ -265,7 +266,6 @@ read (int fd, void *buffer, unsigned size) {
 	//fd가 0이면 파일에서 읽지 않고 keyboard에서 input_getc()로 input을 읽어야한다
 	if (fd == 0) {
 		uint8_t key = input_getc();	 //user가 입력하도록 기다리고 입력하는 키보드 key를 반환한다
-
 	}
 
 	struct fd_structure *fd_elem = find_by_fd_index(fd);
@@ -278,7 +278,7 @@ read (int fd, void *buffer, unsigned size) {
 	}
 
 	lock_release(&file_lock);
-
+  
 	return read_bytes;
 }
 
@@ -300,7 +300,7 @@ write (int fd, const void *buffer, unsigned size) {
 		//이 경우에는 콘솔에 우리가 버퍼를 다 쓸 수 있으니 결국 원래 size만큼 쓴다
 		write_bytes = size;
 	}
-
+  
 	//파일 용량을 끝났으면 원래는 파일을 더 늘려서 마저 쓰겠지만 여기서는 그냥 파일의 마지막주소까지 쓰고 여기까지 썼을때의 총 byte개수를 반환시킨다
 	struct fd_structure *fd_elem = find_by_fd_index(fd);
 	if (fd_elem == NULL) {
