@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <syscall-nr.h>
 #include <stdlib.h>
+#include "threads/synch.h"
 #include "threads/interrupt.h"
 #include "threads/thread.h"
 #include "threads/loader.h"
@@ -12,9 +13,22 @@
 #include "intrinsic.h"
 #include "userprog/process.h"
 
+struct lock file_lock;
+
 void syscall_entry (void);
 void syscall_handler (struct intr_frame *);
 
+void halt(void);
+bool create (const char * file, unsigned initial_size);
+bool remove (const char *file);
+int open (const char * file);
+int filesize (int fd);
+int read (int fd, void *buffer, unsigned size);
+int write (int fd, const void *buffer, unsigned size);
+void seek (int fd, unsigned position);
+unsigned tell (int fd);
+void close (int fd);
+struct fd_structure* find_by_fd_index(int fd);
 void exit(int status);
 tid_t fork (const char *thread_name, struct intr_frame *f);
 int exec (const char *file);
@@ -114,6 +128,17 @@ syscall_handler (struct intr_frame *f UNUSED) {
 	// thread_exit ();
 }
 
+// lock_acquire할때 현재 돌아가고 있는 쓰레드가 락을 이미 가지고 있는데 요청한거면
+// 필요없으니 
+void 
+check_address(void *address) {
+	if (address >= LOADER_PHYS_BASE && lock_held_by_current_thread(&file_lock)) {
+		lock_release(&file_lock);
+	}
+	exit(-1);
+	NOT_REACHED();
+}
+
 void
 halt(void) {
 	power_off();
@@ -126,6 +151,8 @@ create (const char * file, unsigned initial_size) {
 	//일단 항상 현재 들어오는 파일 주소가 유효한지 체크를 한 후에 넘어가야한다
 	//check_bad_ptr(file);
 	//file descriptor table을 할당해줘야하니까 현재 진행중인 프로세스/쓰레드를 받아와서 진행해야함
+	check_address(file);
+
 	struct thread * current_thread = thread_current();
 
 	//포인터를 지금 만들어준 file descriptor table로 지정해줘야함
@@ -144,6 +171,7 @@ create (const char * file, unsigned initial_size) {
 //파일을 제거하는 함수 - open되어 있는 파일은 닫지 않고 그대로 그냥 켜진 상태로 남아있게된다
 bool
 remove (const char *file) {
+	check_address(file);
 	//create랑 같은 로직인데 그냥 filesys_remove함수를 사용한다
 	lock_acquire(&file_lock);
 	bool status = filesys_remove(file);
@@ -157,6 +185,7 @@ remove (const char *file) {
 //or -1 if the file could not be opened.
 int
 open (const char * file) {
+	check_address(file);
 	//fd0, fd1은 stdin, stdout을 위해 따로 빼둬야한다 -- 0이나 1을 리턴하는 경우는 없어야한다
 	lock_acquire(&file_lock);
 
@@ -227,6 +256,9 @@ filesize (int fd) {
 //실제로 읽은 byte 사이즈를 반환하고 파일을 읽지 못한 경우에는 -1을 반환시킨다
 int
 read (int fd, void *buffer, unsigned size) {
+	check_address(buffer);
+	check_address(buffer + size - 1);
+
 	int read_bytes = 0;
 	lock_acquire(&file_lock);
 
@@ -254,6 +286,9 @@ read (int fd, void *buffer, unsigned size) {
 //실제로 써지는 byte만큼을 반환한다 - 안 써지는 byte들도 있을수 있기 때문에 size 보다 더 작은 반환값이 나올수있따
 int
 write (int fd, const void *buffer, unsigned size) {
+	check_address(buffer);
+	check_address(buffer + size - 1);
+
 	int write_bytes = 0;
 	lock_acquire(&file_lock);
 
