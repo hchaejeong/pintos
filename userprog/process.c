@@ -291,7 +291,7 @@ process_exec (void *f_name) {
 	frame -> rsp -= 8;
 	memset(frame -> rsp, 0, sizeof(void *));
 
-	hex_dump(_if.rsp , _if.rsp , USER_STACK - (uint64_t)_if.rsp, true);
+	//hex_dump(_if.rsp , _if.rsp , USER_STACK - (uint64_t)_if.rsp, true);
 
 	/* If load failed, quit. */
 	//load를 끝내면 해당 메모리를 반환해야 한다
@@ -322,9 +322,7 @@ process_wait (tid_t child_tid UNUSED) {
 	 * XXX:       to add infinite loop here before
 	 * XXX:       implementing the process_wait. */
 	//bool temporary = true;
-	for (int i = 0; i < 1000000000; i++) {
-
-	}
+	for (int i = 0; i < 1000000000; i++) {}
 	return -1;
 }
 
