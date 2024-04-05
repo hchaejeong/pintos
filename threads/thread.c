@@ -41,6 +41,7 @@ static struct thread *initial_thread;
 
 /* Lock used by allocate_tid(). */
 static struct lock tid_lock;
+//extern struct lock file_lock;
 
 /* Thread destruction requests */
 static struct list destruction_req;
@@ -119,6 +120,7 @@ thread_init (void) {
 	// init을 하면 empty list가 만들어지는 거니까,
 	// 우리가 sleep_list에 add해주는 상황에서만 wake_up_time에 맞춰서 추가해주면 됨
 	list_init (&destruction_req);
+	//lock_init (&file_lock);
 
 	/* Set up a thread structure for the running thread. */
 	initial_thread = running_thread ();

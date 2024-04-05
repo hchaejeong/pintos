@@ -117,7 +117,6 @@ struct thread {
 #ifdef USERPROG
 	/* Owned by userprog/process.c. */
 	uint64_t *pml4;                     /* Page map level 4 */
-
 #endif	
 	//user app을 사용할때 file descriptor table으로 파일에 접근할수있도록 한다 (현재 Unix은 모든것을 파일로 관리하고 있다 - 시스템 콜도)
 	//file descriptor table의 인덱스로 어떤 시스템 콜 또는 파일을 access하도록 한다

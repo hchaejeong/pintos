@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <syscall-nr.h>
 #include <stdlib.h>
+#include "threads/synch.h"
 #include "threads/interrupt.h"
 #include "threads/thread.h"
 #include "threads/loader.h"
@@ -14,9 +15,22 @@
 #include "threads/palloc.h"
 #include "threads/synch.h"
 
+struct lock file_lock;
+
 void syscall_entry (void);
 void syscall_handler (struct intr_frame *);
 
+void halt(void);
+bool create (const char * file, unsigned initial_size);
+bool remove (const char *file);
+int open (const char * file);
+int filesize (int fd);
+int read (int fd, void *buffer, unsigned size);
+int write (int fd, const void *buffer, unsigned size);
+void seek (int fd, unsigned position);
+unsigned tell (int fd);
+void close (int fd);
+struct fd_structure* find_by_fd_index(int fd);
 void exit(int status);
 tid_t fork (const char *thread_name, struct intr_frame *f);
 int exec (const char *file);
@@ -74,40 +88,40 @@ syscall_handler (struct intr_frame *f UNUSED) {
 			exit(arg1);
 			break;
 		case (SYS_FORK):
-			f->R.rax = fork(arg1, f);
+			f->R.rax = fork((char *) arg1, f);
 			break;
 		case (SYS_EXEC):
-			exec(arg1);
+			f->R.rax = exec((char *) arg1);
 			break;
 		case (SYS_WAIT):
-			f->R.rax = wait(arg1);
+			f->R.rax = wait((tid_t) arg1);
 			break;
 		case (SYS_CREATE):
-			f->R.rax = create(arg1, arg2);
+			f->R.rax = create((char *) arg1, (unsigned) arg2);
 			break;
 		case (SYS_REMOVE):
-			f->R.rax = remove(arg1);
+			f->R.rax = remove((char *) arg1);
 			break;
 		case (SYS_OPEN):
-			f->R.rax = open(arg1);
+			f->R.rax = open((char *) arg1);
 			break;
 		case (SYS_FILESIZE):
-			f->R.rax = filesize(arg1);
+			f->R.rax = filesize((int) arg1);
 			break;
 		case (SYS_READ):
-			f->R.rax = read(arg1, arg2, arg3);
+			f->R.rax = read((int) arg1, (void *) arg2, (unsigned) arg3);
 			break;
 		case (SYS_WRITE):
-			f->R.rax = write(arg1, arg2, arg3);
+			f->R.rax = write((int) arg1, (void *) arg2, (unsigned) arg3);
 			break;
 		case (SYS_SEEK):
-			seek(arg1, arg2);
+			seek((int) arg1, (unsigned) arg2);
 			break;
 		case (SYS_TELL):
-			f -> R.rax = tell(arg1);
+			f -> R.rax = tell((int)arg1);
 			break;
 		case (SYS_CLOSE):
-			close(arg1);
+			close((int) arg1);
 			break;
 		default:
 			printf ("system call!\n");
@@ -115,6 +129,17 @@ syscall_handler (struct intr_frame *f UNUSED) {
 	}
 	// printf ("system call!\n");
 	// thread_exit ();
+}
+
+// lock_acquire할때 현재 돌아가고 있는 쓰레드가 락을 이미 가지고 있는데 요청한거면
+// 필요없으니 
+void 
+check_address(void *address) {
+	if (address >= LOADER_PHYS_BASE && lock_held_by_current_thread(&file_lock)) {
+		lock_release(&file_lock);
+	}
+	exit(-1);
+	NOT_REACHED();
 }
 
 void
@@ -129,6 +154,8 @@ create (const char * file, unsigned initial_size) {
 	//일단 항상 현재 들어오는 파일 주소가 유효한지 체크를 한 후에 넘어가야한다
 	//check_bad_ptr(file);
 	//file descriptor table을 할당해줘야하니까 현재 진행중인 프로세스/쓰레드를 받아와서 진행해야함
+	check_address(file);
+
 	struct thread * current_thread = thread_current();
 
 	//포인터를 지금 만들어준 file descriptor table로 지정해줘야함
@@ -147,6 +174,8 @@ create (const char * file, unsigned initial_size) {
 //파일을 제거하는 함수 - open되어 있는 파일은 닫지 않고 그대로 그냥 켜진 상태로 남아있게된다
 bool
 remove (const char *file) {
+	check_address(file);
+  
 	//create랑 같은 로직인데 그냥 filesys_remove함수를 사용한다
 	lock_acquire(&file_lock);
 	bool status = filesys_remove(file);
@@ -160,6 +189,7 @@ remove (const char *file) {
 //or -1 if the file could not be opened.
 int
 open (const char * file) {
+	check_address(file);
 	//fd0, fd1은 stdin, stdout을 위해 따로 빼둬야한다 -- 0이나 1을 리턴하는 경우는 없어야한다
 	lock_acquire(&file_lock);
 
@@ -196,8 +226,8 @@ open (const char * file) {
 	//파일을 새로 열때마다 리스트에다가 추가해줘야하니까 맨 끝에 푸시를 해준다
 	struct list_elem curr_elem = fd_elem->elem;
 	list_push_back(curr_fdt, &curr_elem);
-
-
+  
+  
 	lock_release(&file_lock);
 
 	//lock release한 다음에 결과를 반환해줘야한다
@@ -210,7 +240,7 @@ int
 filesize (int fd) {
 	int size = 0;
 	lock_acquire(&file_lock);
-
+  
 	//저 file_length함수를 쓰기 위해서는 struct file *형태인 주어진 fd에 있는 파일을 가져와서 이거에 저 함수를 돌려야된다
 	//따라서 우리 파일 테이블 리스트에서 fd 위치에 있는 것을 뽑아와야한다 -- 이걸 해주는 새로운 함수를 만들자
 	struct fd_structure *fd_elem = find_by_fd_index(fd);
@@ -220,7 +250,7 @@ filesize (int fd) {
 	} else {
 		size = file_length(fd_elem->current_file);
 	}
-
+  
 	lock_release(&file_lock);
 
 	return size;
@@ -230,13 +260,15 @@ filesize (int fd) {
 //실제로 읽은 byte 사이즈를 반환하고 파일을 읽지 못한 경우에는 -1을 반환시킨다
 int
 read (int fd, void *buffer, unsigned size) {
+	check_address(buffer);
+	check_address(buffer + size - 1);
+
 	int read_bytes = 0;
 	lock_acquire(&file_lock);
 
 	//fd가 0이면 파일에서 읽지 않고 keyboard에서 input_getc()로 input을 읽어야한다
 	if (fd == 0) {
 		uint8_t key = input_getc();	 //user가 입력하도록 기다리고 입력하는 키보드 key를 반환한다
-
 	}
 
 	struct fd_structure *fd_elem = find_by_fd_index(fd);
@@ -249,7 +281,7 @@ read (int fd, void *buffer, unsigned size) {
 	}
 
 	lock_release(&file_lock);
-
+  
 	return read_bytes;
 }
 
@@ -257,6 +289,9 @@ read (int fd, void *buffer, unsigned size) {
 //실제로 써지는 byte만큼을 반환한다 - 안 써지는 byte들도 있을수 있기 때문에 size 보다 더 작은 반환값이 나올수있따
 int
 write (int fd, const void *buffer, unsigned size) {
+	check_address(buffer);
+	check_address(buffer + size - 1);
+
 	int write_bytes = 0;
 	lock_acquire(&file_lock);
 
@@ -268,7 +303,7 @@ write (int fd, const void *buffer, unsigned size) {
 		//이 경우에는 콘솔에 우리가 버퍼를 다 쓸 수 있으니 결국 원래 size만큼 쓴다
 		write_bytes = size;
 	}
-
+  
 	//파일 용량을 끝났으면 원래는 파일을 더 늘려서 마저 쓰겠지만 여기서는 그냥 파일의 마지막주소까지 쓰고 여기까지 썼을때의 총 byte개수를 반환시킨다
 	struct fd_structure *fd_elem = find_by_fd_index(fd);
 	if (fd_elem == NULL) {
