@@ -249,6 +249,12 @@ thread_create (const char *name, int priority,
 	t->tf.cs = SEL_KCSEG;
 	t->tf.eflags = FLAG_IF;
 
+	// struct list *fd_table = (struct list *) malloc(sizeof(struct list));
+	// t->file_descriptor_table = *fd_table;
+	// if (t->file_descriptor_table == NULL) {
+	// 	return TID_ERROR;
+	// }
+
 	/* Add to run queue. */
 	thread_unblock (t);
 
@@ -860,6 +866,9 @@ init_thread (struct thread *t, const char *name, int priority) {
 	//initialize nice and recent_cpu
 	t->nice = running_thread()->nice;
 	t->recent_cpu = running_thread()->recent_cpu;
+
+	list_init(&t->file_descriptor_table);
+	t->executing_file = NULL;
 
 	// exit num도 init해야함
 	t->exit_num = 0;

@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <syscall-nr.h>
 #include <stdlib.h>
+#include <string.h>
 #include "threads/synch.h"
 #include "threads/interrupt.h"
 #include "threads/thread.h"
@@ -14,11 +15,17 @@
 #include "userprog/process.h"
 #include "threads/palloc.h"
 #include "threads/synch.h"
+#include "threads/init.h"
+#include "devices/input.h"
+
 
 struct lock file_lock;
+//int fd_init;
 
 void syscall_entry (void);
 void syscall_handler (struct intr_frame *);
+
+void check_address(void *address);
 
 void halt(void);
 bool create (const char * file, unsigned initial_size);
@@ -62,7 +69,9 @@ syscall_init (void) {
 			FLAG_IF | FLAG_TF | FLAG_DF | FLAG_IOPL | FLAG_AC | FLAG_NT);
 	
 	//여러 프로세스가 같은 파일을 사용하지 않도록 락을 걸어놓자
-	//lock_init(&file_lock);
+	lock_init(&file_lock);
+	//syscall말고 일반 파일이 들어갈 수 있는 fd 초기화
+	fd_init = 2;
 }
 
 /* The main system call interface */
@@ -72,7 +81,7 @@ syscall_handler (struct intr_frame *f UNUSED) {
 	// 여기서 이제, include/lib/syscall-nr.h를 보면 각 경우의 system call #을 알 수 있다.
 	// 그리고, 여기서부터는 레지스터를 사용해야 한다. 이건 include/threads/interrupt.h에 있다!
 	// intr_frame 안에는 register 모임?인 R이 있고, R 안에는 깃헙 io링크에 있는 %rax 이런애들이 다 있다!
-	/*
+	//NOT_REACHED();
 	switch (f->R.rax) {
 		// %rax는 system call number이라고 적혀있다
 		// include/lib/user/syscall.h에는 구현해야할 모든 경우?가 다 적혀있다.
@@ -80,49 +89,51 @@ syscall_handler (struct intr_frame *f UNUSED) {
 		uint64_t arg1 = f->R.rdi;
 		uint64_t arg2 = f->R.rsi;
 		uint64_t arg3 = f->R.rdx;
+
 		case (SYS_HALT):
 			halt();
 			break;
 		case (SYS_EXIT):
 			//printf("여기는 들어오나?\n");
-			exit(arg1);
+			exit(f->R.rdi);
 			break;
 		case (SYS_FORK):
-			f->R.rax = fork((char *) arg1, f);
+			f->R.rax = fork((char *) f->R.rdi, f);
 			break;
 		case (SYS_EXEC):
-			printf("여기는 들어오나?\n");
-			f->R.rax = exec((char *) arg1);
+			//printf("여기는 들어오나?\n");
+			//f->R.rax = exec((char *) arg1);
+			f->R.rax = exec((char *) f->R.rdi);
 			break;
 		case (SYS_WAIT):
-			f->R.rax = wait((tid_t) arg1);
+			f->R.rax = wait((tid_t) f->R.rdi);
 			break;
 		case (SYS_CREATE):
-			f->R.rax = create((char *) arg1, (unsigned) arg2);
+			f->R.rax = create((char *) f->R.rdi, (unsigned) f->R.rsi);
 			break;
 		case (SYS_REMOVE):
-			f->R.rax = remove((char *) arg1);
+			f->R.rax = remove((char *) f->R.rdi);
 			break;
 		case (SYS_OPEN):
-			f->R.rax = open((char *) arg1);
+			f->R.rax = open((char *) f->R.rdi);
 			break;
 		case (SYS_FILESIZE):
-			f->R.rax = filesize((int) arg1);
+			f->R.rax = filesize((int) f->R.rdi);
 			break;
 		case (SYS_READ):
-			f->R.rax = read((int) arg1, (void *) arg2, (unsigned) arg3);
+			f->R.rax = read((int) f->R.rdi, (void *) f->R.rsi, (unsigned) f->R.rdx);
 			break;
 		case (SYS_WRITE):
-			f->R.rax = write((int) arg1, (void *) arg2, (unsigned) arg3);
+			f->R.rax = write((int) f->R.rdi, (void *) f->R.rsi, (unsigned) f->R.rdx);
 			break;
 		case (SYS_SEEK):
-			seek((int) arg1, (unsigned) arg2);
+			seek((int) f->R.rdi, (unsigned) f->R.rsi);
 			break;
 		case (SYS_TELL):
-			f -> R.rax = tell((int)arg1);
+			f -> R.rax = tell((int)f->R.rdi);
 			break;
 		case (SYS_CLOSE):
-			close((int) arg1);
+			close((int) f->R.rdi);
 			break;
 		default:
 			printf ("system call!\n");
@@ -137,11 +148,29 @@ syscall_handler (struct intr_frame *f UNUSED) {
 // 필요없으니 
 void 
 check_address(void *address) {
-	if (address >= LOADER_PHYS_BASE && lock_held_by_current_thread(&file_lock)) {
+	// if (address >= LOADER_PHYS_BASE) {
+	// 	exit(-1);
+	// }
+
+	if (lock_held_by_current_thread(&file_lock)) {
 		lock_release(&file_lock);
+		exit(-1);
+		NOT_REACHED();
 	}
-	exit(-1);
-	NOT_REACHED();
+
+	if (address == NULL) {
+		exit(-1);
+	}
+
+	if (!is_user_vaddr(address)) {
+		exit(-1);
+	}
+
+	//bad ptr인 경우 user virtual address에서 없는 경우일때 무조건 바로 exit하도록해야함.
+	struct thread *current = thread_current();
+	if (pml4_get_page(current->pml4, address) == NULL) {
+		exit(-1);
+	}
 }
 
 void
@@ -157,6 +186,11 @@ create (const char * file, unsigned initial_size) {
 	//check_bad_ptr(file);
 	//file descriptor table을 할당해줘야하니까 현재 진행중인 프로세스/쓰레드를 받아와서 진행해야함
 	check_address(file);
+
+	//file이 가르키고 있는 부분에 null sentinel이 있는경우 bad ptr이니까 바로 exit시켜야한다
+	if (file[strlen(file) - 1] == '/') {
+		return false;
+	}
 
 	struct thread * current_thread = thread_current();
 
@@ -186,51 +220,95 @@ remove (const char *file) {
 	return status;
 }
 
+bool
+compare_fd_func (const struct list_elem *a,
+                  const struct list_elem *b,
+                  void *aux) {
+   struct fd_structure *a_fd_elem = list_entry(a, struct fd_structure, elem);
+   struct fd_structure *b_fd_elem = list_entry(b, struct fd_structure, elem);
+
+   return a_fd_elem->fd_index < b_fd_elem->fd_index;
+}
+
 //Opens the file called file. 
 //Returns a nonnegative integer  called a "file descriptor" (fd), 
 //or -1 if the file could not be opened.
 int
 open (const char * file) {
+	if (file == NULL) {
+		return -1;
+	}
 	check_address(file);
+	
 	//fd0, fd1은 stdin, stdout을 위해 따로 빼둬야한다 -- 0이나 1을 리턴하는 경우는 없어야한다
 	lock_acquire(&file_lock);
+	struct file *actual_file = filesys_open(file);
+	lock_release(&file_lock);
+	
+	if (!actual_file) {		//파일을 열지 못한 경우
+		//free (fd_elem);		//할당한 공간을 사용하지 않았기 때문에 다시 free해줘서 다른 애들이 쓸 수 있게 해준다.
+		//lock_release(&file_lock);
+		return -1;
+	}
 
 	struct thread *current_thread = thread_current();
 
 	struct list *curr_fdt = &current_thread -> file_descriptor_table;
-	bool fdt_empty = false;
+	// bool fdt_empty = false;
 	struct fd_structure *fd_elem = calloc(1, sizeof(struct fd_structure));
 	if (fd_elem != NULL) {
+		// lock_acquire(&file_lock);
+		
+		// fd_elem->current_file = actual_file;
+		// fd_elem->fd_index = fd_init;
+		// //fd_init++;
+
+		// lock_release(&file_lock);
+
 		if (list_empty(curr_fdt)) {
-			fd_elem->fd_index = 2;
-			fdt_empty = true;
+			lock_acquire(&file_lock);
+			//이 부분에서 파일을 넣는게 필요하다
+			fd_elem->fd_index = 3;
+			fd_elem -> current_file = actual_file;
+			// fdt_empty = true;
+			//fd_init++;
+			lock_release(&file_lock);
+			list_push_back(curr_fdt, &(fd_elem->elem));
+		} else {
+			int prev_index = list_entry(list_back(curr_fdt), struct fd_structure, elem)->fd_index;
+			lock_acquire(&file_lock);
+			fd_elem->fd_index = prev_index + 1;
+			fd_elem -> current_file = actual_file;
+			lock_release(&file_lock);
+
+			list_push_back(curr_fdt, &(fd_elem->elem));
 		}
 	} else {
+		//lock_release(&file_lock);
 		return -1;		//새로운 파일 열 공간이 부족한 경우 open되지 않기 때문에 -1을 리턴한다.
 	}
+	//fd_init++;
 
-	
-	struct file *actual_file = filesys_open(file);
-	if (!actual_file) {		//파일을 열지 못한 경우
-		free (fd_elem);		//할당한 공간을 사용하지 않았기 때문에 다시 free해줘서 다른 애들이 쓸 수 있게 해준다.
-		lock_release(&file_lock);
-		return -1;
-	}
+	//list_insert_ordered(curr_fdt, &fd_elem->elem, compare_fd_func, NULL);
 
 	//파일이 제대로 잘 열렸으면 지금 fd 원소의 파일에 저장해놓는다
-	fd_elem->current_file = actual_file;
+	//fd_elem->current_file = actual_file;
+	//fd_init++;
 	//각 프로세스마다 자신만의 file descriptors을 가지고 있다 - child processes
 	//현재 fdt 리스트의 맨 뒤에 넣기 때문에 현재 최대 index보다 1을 increment해줘야한다.
-	if (!fdt_empty) {
-		int prev_index = list_entry(list_back(curr_fdt), struct fd_structure, elem)->fd_index;
-		fd_elem->fd_index = prev_index + 1;
-	}
+	// if (!fdt_empty) {
+	// 	int prev_index = list_entry(list_back(curr_fdt), struct fd_structure, elem)->fd_index;
+	// 	fd_elem->fd_index = prev_index + 1;
+	// }
+	
 	//파일을 새로 열때마다 리스트에다가 추가해줘야하니까 맨 끝에 푸시를 해준다
-	struct list_elem curr_elem = fd_elem->elem;
-	list_push_back(curr_fdt, &curr_elem);
+	// if (!list_empty(curr_fdt)) {
+	// 	struct list_elem curr_elem = fd_elem->elem;
+	// 	list_push_back(curr_fdt, &curr_elem);
+	// }
+	
   
-  
-	lock_release(&file_lock);
+	//lock_release(&file_lock);
 
 	//lock release한 다음에 결과를 반환해줘야한다
 	return fd_elem->fd_index;
@@ -275,6 +353,7 @@ read (int fd, void *buffer, unsigned size) {
 
 	struct fd_structure *fd_elem = find_by_fd_index(fd);
 	if (fd_elem == NULL) {
+		//exit(-1);
 		read_bytes = -1;
 	} else {
 		//지금 fd에 맞는 파일을 뽑아오고 이 파일을 읽어줘야한다
@@ -293,26 +372,35 @@ int
 write (int fd, const void *buffer, unsigned size) {
 	check_address(buffer);
 	check_address(buffer + size - 1);
+	//printf("doing write syscall");
 
 	int write_bytes = 0;
+	// if (size == 0) {
+	// 	return 0;
+	// }
+	
 	lock_acquire(&file_lock);
-
+	
 	//fd가 1이면 stdout 시스템 콜이기 떄문에 putbuf()을 이용해서 콘솔에다가 적어줘야한다
-	if (fd == 1) {
+	if (fd == 0) {
+		lock_release(&file_lock);
+		return -1;
+	} else if (fd == 1) {
 		//should write all of buffer in one call
 		//대신 버퍼 사이즈가 너무 크면 좀 나눠서 쓰도록 한다
+		//NOT_REACHED();
 		putbuf(buffer, size);
 		//이 경우에는 콘솔에 우리가 버퍼를 다 쓸 수 있으니 결국 원래 size만큼 쓴다
 		write_bytes = size;
-	}
-  
-	//파일 용량을 끝났으면 원래는 파일을 더 늘려서 마저 쓰겠지만 여기서는 그냥 파일의 마지막주소까지 쓰고 여기까지 썼을때의 총 byte개수를 반환시킨다
-	struct fd_structure *fd_elem = find_by_fd_index(fd);
-	if (fd_elem == NULL) {
-		write_bytes = -1;
 	} else {
-		struct file *curr_file = fd_elem->current_file;
-		write_bytes = (int) file_write(curr_file, buffer, size);	//off_t 타입으로 나와니까 int으로 만들어주고 반환
+		//파일 용량을 끝났으면 원래는 파일을 더 늘려서 마저 쓰겠지만 여기서는 그냥 파일의 마지막주소까지 쓰고 여기까지 썼을때의 총 byte개수를 반환시킨다
+		struct fd_structure *fd_elem = find_by_fd_index(fd);
+		if (fd_elem == NULL) {
+			write_bytes = -1;
+		} else {
+			struct file *curr_file = fd_elem->current_file;
+			write_bytes = (int) file_write(curr_file, buffer, size);	//off_t 타입으로 나와니까 int으로 만들어주고 반환
+		}
 	}
 
 	lock_release(&file_lock);
@@ -362,29 +450,25 @@ tell (int fd) {
 //void file_close(struct file *file)을 사용하려면 fd에 맞는 file을 찾아내고 그걸 넘겨줘야한다
 void
 close (int fd) {
-	lock_acquire(&file_lock);
-
 	struct fd_structure *fd_elem = find_by_fd_index(fd);
 	if (fd_elem == NULL) {
-		lock_release(&file_lock);
 		return;
 	} else {
+		lock_acquire(&file_lock);
 		struct file *curr_file = fd_elem->current_file;
 		file_close(curr_file);
+		lock_release(&file_lock);
 		//파일을 열떄 file descriptor table에서 이 파일을 위한 자리/메모리를 할당해주었고
 		//우리는 각 파일 원소들을 thread안에 리스트로 관리하고 있기 때문에 이 리스트에서 없애주고 할당된 공간도 없애줘야한다
 		struct list_elem curr_elem = fd_elem->elem;
 		list_remove(&curr_elem);
 		free(fd_elem);
 	}
-
-	lock_release(&file_lock);
 }
 
+//주어진 fd를 가지고 있는 파일을 찾을때 필요하므로 fd_structure을 전체 반환해서 list_elem도 쓸 수 있게
 struct fd_structure*
 find_by_fd_index(int fd) {
-	lock_acquire(&file_lock);
-
 	struct thread *current_thread = thread_current();
 	struct list *curr_fdt = &current_thread -> file_descriptor_table;
 	struct list_elem *curr_elem = list_begin(curr_fdt);
@@ -434,10 +518,10 @@ exec (const char *file) {
 	// fd는 exec call 상황에서 open 상태로 남아있음
 
 	// 일단 먼저 뭐든 간에 올바른 address인지 check하는 과정이 필요함.
-	printf("addr check: %d\n", !addr_check(file));
+	//printf("addr check: %d\n", !addr_check(file));
 	if (!addr_check(file)) {
 		//printf("addr check: %d\n", addr_check(file));
-		printf("이거 때문인가\n"); // 이거 때문이네...
+		//printf("이거 때문인가\n"); // 이거 때문이네...
 		exit(-1);
 	}
 	// process_create_initd에서 strlcpy 썼던 것처럼 이름을 복사해서, 그 이름으로 exec 시킨다!
