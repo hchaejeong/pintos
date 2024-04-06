@@ -131,6 +131,8 @@ struct thread {
 
 	int exit_num; // exit할 때 어떤 exit인지 적어줘야 함
 
+	struct list my_child;
+
 #ifdef VM
 	/* Table for whole virtual memory owned by thread. */
 	struct supplemental_page_table spt;

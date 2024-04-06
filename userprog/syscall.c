@@ -72,7 +72,7 @@ syscall_handler (struct intr_frame *f UNUSED) {
 	// 여기서 이제, include/lib/syscall-nr.h를 보면 각 경우의 system call #을 알 수 있다.
 	// 그리고, 여기서부터는 레지스터를 사용해야 한다. 이건 include/threads/interrupt.h에 있다!
 	// intr_frame 안에는 register 모임?인 R이 있고, R 안에는 깃헙 io링크에 있는 %rax 이런애들이 다 있다!
-
+	/*
 	switch (f->R.rax) {
 		// %rax는 system call number이라고 적혀있다
 		// include/lib/user/syscall.h에는 구현해야할 모든 경우?가 다 적혀있다.
@@ -91,6 +91,7 @@ syscall_handler (struct intr_frame *f UNUSED) {
 			f->R.rax = fork((char *) arg1, f);
 			break;
 		case (SYS_EXEC):
+			printf("여기는 들어오나?\n");
 			f->R.rax = exec((char *) arg1);
 			break;
 		case (SYS_WAIT):
@@ -127,8 +128,9 @@ syscall_handler (struct intr_frame *f UNUSED) {
 			printf ("system call!\n");
 			thread_exit ();
 	}
-	// printf ("system call!\n");
-	// thread_exit ();
+	*/
+	printf ("system call!\n");
+	thread_exit ();
 }
 
 // lock_acquire할때 현재 돌아가고 있는 쓰레드가 락을 이미 가지고 있는데 요청한거면
@@ -403,7 +405,7 @@ find_by_fd_index(int fd) {
 
 void
 exit (int status) {
-	//printf("status: %d\n", status);
+	printf("status: %d\n", status);
 	thread_current()->exit_num = status;
 	thread_exit();
 }
@@ -440,8 +442,8 @@ exec (const char *file) {
 	}
 	// process_create_initd에서 strlcpy 썼던 것처럼 이름을 복사해서, 그 이름으로 exec 시킨다!
 	// 일단 하나 page를 할당받고, 이상하면 exit.
-	//char *file_name = palloc_get_page(0);
-	char *file_name = palloc_get_page(PAL_ZERO);
+	char *file_name = palloc_get_page(0);
+	//char *file_name = palloc_get_page(PAL_ZERO);
 	int file_size = strlen(file) + 1;
 	if (file_name == NULL) {
 		exit(-1);
