@@ -95,6 +95,8 @@ syscall_handler (struct intr_frame *f UNUSED) {
 			break;
 		case (SYS_EXIT):
 			//printf("여기는 들어오나?\n");
+			//printf("%s: exit(%d)\n", thread_current()->name, f->R.rdi);
+			//이걸 또 여기서 하면 에러가 뜬다. create할 때 exit이 출력이 안된달까...
 			exit(f->R.rdi);
 			break;
 		case (SYS_FORK):
@@ -139,9 +141,8 @@ syscall_handler (struct intr_frame *f UNUSED) {
 			printf ("system call!\n");
 			thread_exit ();
 	}
-	*/
-	printf ("system call!\n");
-	thread_exit ();
+	// printf ("system call!\n");
+	// thread_exit ();
 }
 
 // lock_acquire할때 현재 돌아가고 있는 쓰레드가 락을 이미 가지고 있는데 요청한거면
@@ -489,8 +490,9 @@ find_by_fd_index(int fd) {
 
 void
 exit (int status) {
-	printf("status: %d\n", status);
+	//printf("status: %d\n", status);
 	thread_current()->exit_num = status;
+	printf("%s: exit(%d)\n", thread_current()->name, thread_current()->exit_num);
 	thread_exit();
 }
 
@@ -526,8 +528,12 @@ exec (const char *file) {
 	}
 	// process_create_initd에서 strlcpy 썼던 것처럼 이름을 복사해서, 그 이름으로 exec 시킨다!
 	// 일단 하나 page를 할당받고, 이상하면 exit.
-	char *file_name = palloc_get_page(0);
-	//char *file_name = palloc_get_page(PAL_ZERO);
+	
+	// char *file_name = palloc_get_page(0);
+	// palloc_get_page(0)으로 하면 안됨. PAL_ZERO와는 완전히 다름.
+	// 0으로 완전히 채워진!! 즉, 우리가 바로 수정하고 사용할 수 있는 page가 되려면
+	// 0이 아닌 PAL_ZERO를 사용해야함.
+	char *file_name = palloc_get_page(PAL_ZERO);
 	int file_size = strlen(file) + 1;
 	if (file_name == NULL) {
 		exit(-1);

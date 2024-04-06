@@ -339,7 +339,8 @@ process_exit (void) {
 	/* (exit) begin
 		exit: exit(57) */
 	// 이런 식으로 뜬다. 그러면 exit 숫자를 그대로 적으면 되는건가!
-	printf("%s: exit(%d)\n", curr->name, curr->exit_num);
+	//printf("%s: exit(%d)\n", curr->name, curr->exit_num);
+	// 아니 이렇게 적으면 project 1에서도 저 exit가 뜸... 아니 여기서 저 print 적으라매 진짜 너무해
 
 	process_cleanup ();
 }
