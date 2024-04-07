@@ -498,6 +498,7 @@ exit (int status) {
 
 tid_t
 fork (const char *thread_name, struct intr_frame *f) {
+	printf("여긴 들어가?\n");
 	return process_fork(thread_name, f);
 }
 
@@ -528,7 +529,7 @@ exec (const char *file) {
 	}
 	// process_create_initd에서 strlcpy 썼던 것처럼 이름을 복사해서, 그 이름으로 exec 시킨다!
 	// 일단 하나 page를 할당받고, 이상하면 exit.
-	
+
 	// char *file_name = palloc_get_page(0);
 	// palloc_get_page(0)으로 하면 안됨. PAL_ZERO와는 완전히 다름.
 	// 0으로 완전히 채워진!! 즉, 우리가 바로 수정하고 사용할 수 있는 page가 되려면
@@ -539,7 +540,7 @@ exec (const char *file) {
 		exit(-1);
 	} else {
 		strlcpy(file_name, file, file_size);
-		if (process_exec(file_name) == -1) {
+		if (process_exec(file_name) < 0) {
 			exit(-1);
 			//return -1;
 		}

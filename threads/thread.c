@@ -873,6 +873,14 @@ init_thread (struct thread *t, const char *name, int priority) {
 	// exit num도 init해야함
 	t->exit_num = 0;
 
+	// sema도 init. fork에서 사용하는 것이므로 0으로 init
+	// 0이면 부모가 자식이 다 load 될 때까지 기다리다가 자식이 1로 sema up하면 그때 다시 실행될 수 있도록!
+	sema_init(&t->sema_for_fork, 0);
+	sema_init(&t->sema_for_wait, 0);
+
+	// child list도 init
+	list_init(&t->my_child);
+
 }
 
 /* Chooses and returns the next thread to be scheduled.  Should

@@ -5,6 +5,7 @@
 #include <list.h>
 #include <stdint.h>
 #include "threads/interrupt.h"
+#include "threads/synch.h"
 #ifdef VM
 #include "vm/vm.h"
 #endif
@@ -131,7 +132,13 @@ struct thread {
 
 	int exit_num; // exit할 때 어떤 exit인지 적어줘야 함
 
-	struct list my_child;
+	struct intr_frame if_for_fork; // fork할 때 부모의 if를 미리 저장해두기 위함
+	struct semaphore sema_for_fork; // fork할 때 child 기다리는 sema
+
+	struct semaphore sema_for_wait;// wait할 때 child 기다리는 sema
+
+	struct list my_child; // 해당 thread의 child들의 리스트
+	struct list_elem my_child_elem; // list_elem 형태로 저장해야 하니까 새로 정의
 
 #ifdef VM
 	/* Table for whole virtual memory owned by thread. */
