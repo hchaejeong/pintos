@@ -145,6 +145,8 @@ page_fault (struct intr_frame *f) {
 	if (vm_try_handle_fault (f, fault_addr, user, write, not_present))
 		return;
 #endif
+	//지금 page fault이 일어나면 계속 패닉으로 kill이 되는데 그러지 말고 그냥 exit(-1)으로 되도록 수정
+	exit(-1);
 
 	/* Count page faults. */
 	page_fault_cnt++;
