@@ -293,6 +293,7 @@ open (const char * file) {
 		return -1;		//새로운 파일 열 공간이 부족한 경우 open되지 않기 때문에 -1을 리턴한다.
 	}
 	// fd_init++;
+	
 
 	//list_insert_ordered(curr_fdt, &fd_elem->elem, compare_fd_func, NULL);
 
