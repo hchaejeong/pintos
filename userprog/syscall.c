@@ -95,15 +95,21 @@ syscall_handler (struct intr_frame *f UNUSED) {
 			break;
 		case (SYS_EXIT):
 			//printf("여기는 들어오나?\n");
+			//printf("%s: exit(%d)\n", thread_current()->name, f->R.rdi);
+			//이걸 또 여기서 하면 에러가 뜬다. create할 때 exit이 출력이 안된달까...
 			exit(f->R.rdi);
 			break;
 		case (SYS_FORK):
+			//printf("sys_fork에는 들어오냐?/n");
 			f->R.rax = fork((char *) f->R.rdi, f);
 			break;
 		case (SYS_EXEC):
+			//printf("여기는 들어오나?\n");
+			//f->R.rax = exec((char *) arg1);
 			f->R.rax = exec((char *) f->R.rdi);
 			break;
 		case (SYS_WAIT):
+			//printf("sys_wait에는 들어오냐?/n");
 			f->R.rax = wait((tid_t) f->R.rdi);
 			break;
 		case (SYS_CREATE):
@@ -253,38 +259,41 @@ open (const char * file) {
 	struct list *curr_fdt = &current_thread -> file_descriptor_table;
 	// bool fdt_empty = false;
 	struct fd_structure *fd_elem = calloc(1, sizeof(struct fd_structure));
+	int fd;
 	if (fd_elem != NULL) {
 		// lock_acquire(&file_lock);
 		
 		// fd_elem->current_file = actual_file;
 		// fd_elem->fd_index = fd_init;
-		// //fd_init++;
+		// fd_init++;
 
 		// lock_release(&file_lock);
-
 		if (list_empty(curr_fdt)) {
-			lock_acquire(&file_lock);
-			//이 부분에서 파일을 넣는게 필요하다
-			fd_elem->fd_index = 3;
-			fd_elem -> current_file = actual_file;
-			// fdt_empty = true;
-			//fd_init++;
-			lock_release(&file_lock);
-			list_push_back(curr_fdt, &(fd_elem->elem));
+			fd = 2;
+			// lock_acquire(&file_lock);
+			// //이 부분에서 파일을 넣는게 필요하다
+			// fd_elem->fd_index = 3;
+			// fd_elem -> current_file = actual_file;
+			// // fdt_empty = true;
+			// //fd_init++;
+			// lock_release(&file_lock);
+			// list_push_back(curr_fdt, &(fd_elem->elem));
 		} else {
-			int prev_index = list_entry(list_back(curr_fdt), struct fd_structure, elem)->fd_index;
-			lock_acquire(&file_lock);
-			fd_elem->fd_index = prev_index + 1;
-			fd_elem -> current_file = actual_file;
-			lock_release(&file_lock);
-
-			list_push_back(curr_fdt, &(fd_elem->elem));
+			fd = list_entry(list_back(curr_fdt), struct fd_structure, elem)->fd_index;
 		}
+
+		lock_acquire(&file_lock);
+		fd_elem->fd_index = fd + 1;
+		fd_elem -> current_file = actual_file;
+		lock_release(&file_lock);
+
+		list_push_back(curr_fdt, &(fd_elem->elem));
 	} else {
 		//lock_release(&file_lock);
 		return -1;		//새로운 파일 열 공간이 부족한 경우 open되지 않기 때문에 -1을 리턴한다.
 	}
-	//fd_init++;
+	// fd_init++;
+	
 
 	//list_insert_ordered(curr_fdt, &fd_elem->elem, compare_fd_func, NULL);
 
@@ -308,7 +317,7 @@ open (const char * file) {
 	//lock_release(&file_lock);
 
 	//lock release한 다음에 결과를 반환해줘야한다
-	return fd_elem->fd_index;
+	return fd + 1;
 }
 
 //off_t file_length(struct file *file)함수를 사용한다
@@ -316,7 +325,6 @@ open (const char * file) {
 int
 filesize (int fd) {
 	int size = 0;
-	lock_acquire(&file_lock);
   
 	//저 file_length함수를 쓰기 위해서는 struct file *형태인 주어진 fd에 있는 파일을 가져와서 이거에 저 함수를 돌려야된다
 	//따라서 우리 파일 테이블 리스트에서 fd 위치에 있는 것을 뽑아와야한다 -- 이걸 해주는 새로운 함수를 만들자
@@ -325,10 +333,10 @@ filesize (int fd) {
 		//찾지 못한거기때문에 -1을 반환시킨다
 		size = -1;
 	} else {
+		lock_acquire(&file_lock);
 		size = file_length(fd_elem->current_file);
+		lock_release(&file_lock);
 	}
-  
-	lock_release(&file_lock);
 
 	return size;
 }
@@ -341,11 +349,12 @@ read (int fd, void *buffer, unsigned size) {
 	check_address(buffer + size - 1);
 
 	int read_bytes = 0;
-	lock_acquire(&file_lock);
 
 	//fd가 0이면 파일에서 읽지 않고 keyboard에서 input_getc()로 input을 읽어야한다
 	if (fd == 0) {
+		lock_acquire(&file_lock);
 		uint8_t key = input_getc();	 //user가 입력하도록 기다리고 입력하는 키보드 key를 반환한다
+		lock_release(&file_lock);
 	}
 
 	struct fd_structure *fd_elem = find_by_fd_index(fd);
@@ -354,12 +363,12 @@ read (int fd, void *buffer, unsigned size) {
 		read_bytes = -1;
 	} else {
 		//지금 fd에 맞는 파일을 뽑아오고 이 파일을 읽어줘야한다
+		lock_acquire(&file_lock);
 		struct file *curr_file = fd_elem->current_file;
 		read_bytes = (int) file_read(curr_file, buffer, size);
+		lock_release(&file_lock);
 	}
 
-	lock_release(&file_lock);
-  
 	return read_bytes;
 }
 
@@ -376,17 +385,16 @@ write (int fd, const void *buffer, unsigned size) {
 	// 	return 0;
 	// }
 	
-	lock_acquire(&file_lock);
-	
 	//fd가 1이면 stdout 시스템 콜이기 떄문에 putbuf()을 이용해서 콘솔에다가 적어줘야한다
 	if (fd == 0) {
-		lock_release(&file_lock);
 		return -1;
 	} else if (fd == 1) {
 		//should write all of buffer in one call
 		//대신 버퍼 사이즈가 너무 크면 좀 나눠서 쓰도록 한다
 		//NOT_REACHED();
+		lock_acquire(&file_lock);
 		putbuf(buffer, size);
+		lock_release(&file_lock);
 		//이 경우에는 콘솔에 우리가 버퍼를 다 쓸 수 있으니 결국 원래 size만큼 쓴다
 		write_bytes = size;
 	} else {
@@ -395,12 +403,12 @@ write (int fd, const void *buffer, unsigned size) {
 		if (fd_elem == NULL) {
 			write_bytes = -1;
 		} else {
+			lock_acquire(&file_lock);
 			struct file *curr_file = fd_elem->current_file;
 			write_bytes = (int) file_write(curr_file, buffer, size);	//off_t 타입으로 나와니까 int으로 만들어주고 반환
+			lock_release(&file_lock);
 		}
 	}
-
-	lock_release(&file_lock);
 
 	return write_bytes;
 }
@@ -408,12 +416,11 @@ write (int fd, const void *buffer, unsigned size) {
 //fd의 파일이 다음으로 읽거나 쓸 next byte을 position으로 바꿔주는 void 함수
 void
 seek (int fd, unsigned position) {
-	lock_acquire(&file_lock);
 	struct fd_structure *fd_elem = find_by_fd_index(fd);
 	if (fd_elem == NULL) {
-		lock_release(&file_lock);
 		return;
 	} else {
+		lock_acquire(&file_lock);
 		struct file *curr_file = fd_elem->current_file;
 		file_seek(curr_file, position);
 	}
@@ -427,18 +434,17 @@ seek (int fd, unsigned position) {
 unsigned
 tell (int fd) {	
 	unsigned result = -1;
-	lock_acquire(&file_lock);
 
 	struct fd_structure *fd_elem = find_by_fd_index(fd);
 	//fd의 파일이 존재하지 않는경우 0을 반환한ㄷ
 	if (fd_elem == NULL) {
 		result = -1;
 	} else {
+		lock_acquire(&file_lock);
 		struct file *curr_file = fd_elem -> current_file;
 		result = file_tell(curr_file);
+		lock_release(&file_lock);
 	}	
-
-	lock_release(&file_lock);
 
 	return result;
 }
@@ -488,11 +494,13 @@ void
 exit (int status) {
 	//printf("status: %d\n", status);
 	thread_current()->exit_num = status;
+	printf("%s: exit(%d)\n", thread_current()->name, thread_current()->exit_num);
 	thread_exit();
 }
 
 tid_t
 fork (const char *thread_name, struct intr_frame *f) {
+	//printf("여긴 들어가?\n");
 	return process_fork(thread_name, f);
 }
 
@@ -523,14 +531,18 @@ exec (const char *file) {
 	}
 	// process_create_initd에서 strlcpy 썼던 것처럼 이름을 복사해서, 그 이름으로 exec 시킨다!
 	// 일단 하나 page를 할당받고, 이상하면 exit.
-	//char *file_name = palloc_get_page(0);
+
+	// char *file_name = palloc_get_page(0);
+	// palloc_get_page(0)으로 하면 안됨. PAL_ZERO와는 완전히 다름.
+	// 0으로 완전히 채워진!! 즉, 우리가 바로 수정하고 사용할 수 있는 page가 되려면
+	// 0이 아닌 PAL_ZERO를 사용해야함.
 	char *file_name = palloc_get_page(PAL_ZERO);
 	int file_size = strlen(file) + 1;
 	if (file_name == NULL) {
 		exit(-1);
 	} else {
 		strlcpy(file_name, file, file_size);
-		if (process_exec(file_name) == -1) {
+		if (process_exec(file_name) < 0) {
 			exit(-1);
 			//return -1;
 		}

@@ -146,10 +146,14 @@ page_fault (struct intr_frame *f) {
 		return;
 #endif
 	//지금 page fault이 일어나면 계속 패닉으로 kill이 되는데 그러지 말고 그냥 exit(-1)으로 되도록 수정
-	exit(-1);
+	//exit(-1);
 
 	/* Count page faults. */
 	page_fault_cnt++;
+
+	if (user) {
+		exit(-1);
+	}
 
 	/* If the fault is true fault, show info and exit. */
 	printf ("Page fault at %p: %s error %s page in %s context.\n",
