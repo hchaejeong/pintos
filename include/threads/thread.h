@@ -135,7 +135,8 @@ struct thread {
 	struct intr_frame if_for_fork; // fork할 때 부모의 if를 미리 저장해두기 위함
 	struct semaphore sema_for_fork; // fork할 때 child 기다리는 sema
 
-	struct semaphore sema_for_wait;// wait할 때 child 기다리는 sema
+	struct semaphore sema_for_wait; // wait할 때 child 기다리는 sema
+	struct semaphore sema_for_exit; // 내가 exit 됐다는 의미의 sema
 
 	struct list my_child; // 해당 thread의 child들의 리스트
 	struct list_elem my_child_elem; // list_elem 형태로 저장해야 하니까 새로 정의

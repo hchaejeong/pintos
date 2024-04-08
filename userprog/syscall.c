@@ -100,6 +100,7 @@ syscall_handler (struct intr_frame *f UNUSED) {
 			exit(f->R.rdi);
 			break;
 		case (SYS_FORK):
+			//printf("sys_fork에는 들어오냐?/n");
 			f->R.rax = fork((char *) f->R.rdi, f);
 			break;
 		case (SYS_EXEC):
@@ -108,6 +109,7 @@ syscall_handler (struct intr_frame *f UNUSED) {
 			f->R.rax = exec((char *) f->R.rdi);
 			break;
 		case (SYS_WAIT):
+			//printf("sys_wait에는 들어오냐?/n");
 			f->R.rax = wait((tid_t) f->R.rdi);
 			break;
 		case (SYS_CREATE):
@@ -498,7 +500,7 @@ exit (int status) {
 
 tid_t
 fork (const char *thread_name, struct intr_frame *f) {
-	printf("여긴 들어가?\n");
+	//printf("여긴 들어가?\n");
 	return process_fork(thread_name, f);
 }
 
