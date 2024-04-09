@@ -111,7 +111,7 @@ process_fork (const char *name, struct intr_frame *if_ UNUSED) {
 		return TID_ERROR;
 	}
 	for (child = list_begin(children); child != list_end(children); child = list_next(child)) {
-		if (new_thread = list_entry(child, struct thread, my_child_elem)->tid) {
+		if (new_thread == list_entry(child, struct thread, my_child_elem)->tid) {
 			break;
 		}
 	}
@@ -512,7 +512,7 @@ process_wait (tid_t child_tid UNUSED) {
 	//printf("list size: %d\n", (int) list_size(children)); // 왜 2지?? thread.c에서 확인해 본 결과 만들때부터 1이 되는가봄.
 	for (child = list_begin(children); child != list_end(children); child = list_next(child)) {
 		//printf("child name: %s\n", list_entry(child, struct thread, my_child_elem)->name);
-		if (child_tid = list_entry(child, struct thread, my_child_elem)->tid) {
+		if (child_tid == list_entry(child, struct thread, my_child_elem)->tid) {
 			break;
 		}
 	}
