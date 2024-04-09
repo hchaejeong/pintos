@@ -345,30 +345,42 @@ filesize (int fd) {
 //실제로 읽은 byte 사이즈를 반환하고 파일을 읽지 못한 경우에는 -1을 반환시킨다
 int
 read (int fd, void *buffer, unsigned size) {
+	//printf("어디서부터 잘못된걸까\n");
 	check_address(buffer);
+	//printf("어디야1\n");
 	check_address(buffer + size - 1);
+	//printf("어디야2\n");
 
 	int read_bytes = 0;
 
 	//fd가 0이면 파일에서 읽지 않고 keyboard에서 input_getc()로 input을 읽어야한다
 	if (fd == 0) {
+		//printf("아니 설마 여기야?\n");
 		lock_acquire(&file_lock);
 		uint8_t key = input_getc();	 //user가 입력하도록 기다리고 입력하는 키보드 key를 반환한다
 		lock_release(&file_lock);
 	}
-
+	//printf("fd: %d\n", fd);
+	//printf("여기야3\n");
 	struct fd_structure *fd_elem = find_by_fd_index(fd);
+	//printf("여기야4\n"); // 여기가 안 된다. child의 경우 파일이 다 복사가 안되나보다...?
 	if (fd_elem == NULL) {
 		//exit(-1);
+		//printf("아니 설마 여기야??????\n");
 		read_bytes = -1;
 	} else {
+		//printf("일단 여기까지는 올까?\n");
 		//지금 fd에 맞는 파일을 뽑아오고 이 파일을 읽어줘야한다
-		lock_acquire(&file_lock);
 		struct file *curr_file = fd_elem->current_file;
-		read_bytes = (int) file_read(curr_file, buffer, size);
+		if (curr_file == NULL) {
+			return -1;
+		}
+		lock_acquire(&file_lock);
+		//struct file *curr_file = fd_elem->current_file;
+		read_bytes = file_read(curr_file, buffer, size);
 		lock_release(&file_lock);
 	}
-
+	//printf("여기까지 오는걸까?\n"); // child할 때 안 온다
 	return read_bytes;
 }
 
@@ -475,15 +487,18 @@ find_by_fd_index(int fd) {
 	struct thread *current_thread = thread_current();
 	struct list *curr_fdt = &current_thread -> file_descriptor_table;
 	struct list_elem *curr_elem = list_begin(curr_fdt);
+	//printf("find 여기야1\n");
 	
 	while (curr_elem != list_end(curr_fdt)) {
 		struct fd_structure *curr_fd_elem = list_entry(curr_elem, struct fd_structure, elem);
+		//printf("fd index, 즉 파일은 있냐?: %d\n", curr_fd_elem->fd_index);
 		if (curr_fd_elem -> fd_index == fd) {
 			//그럼 이 fd원소가 찾아진거기때문에 이 fd_structure element를 반환한다
+			//printf("안 찾아졌니?\n"); // 안 찾아졌네...
 			return curr_fd_elem;
 		}
 
-		curr_elem = list_next(curr_fdt);
+		curr_elem = list_next(curr_elem);
 	}
 
 	//다 찾아봤는데 없으면 NULL을 반환하도록
