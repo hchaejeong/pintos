@@ -246,6 +246,7 @@ __do_fork (void *aux) {
 			continue;
 		} else {
 			struct fd_structure *new_fd = calloc(1, sizeof(struct fd_structure));
+			//struct fd_structure *new_fd = palloc_get_page(0);
 			/*
 			if (real_file == NULL) {
 				// fd는 null이 아닌데 file이 null인 경우
@@ -520,7 +521,31 @@ process_exit (void) {
 	//printf("%s: exit(%d)\n", curr->name, curr->exit_num);
 	// 아니 이렇게 적으면 project 1에서도 저 exit가 뜸... 아니 여기서 저 print 적으라매 진짜 너무해
 	//printf("file이 뭘까: %d\n", curr->executing_file);
-	file_close(curr->executing_file);
+	if (curr->executing_file != NULL) {
+		printf("어디야1\n");
+		file_allow_write(curr->executing_file); // 쓸 수 있게 해준 뒤
+		file_close(curr->executing_file); // 삭제해야함!
+		curr->executing_file = NULL;
+		palloc_free_page(curr->executing_file);
+	}
+	//file_close(curr->executing_file);
+
+	// 현 thread에 있는 모든 파일들을 닫아줘야 함
+	struct list *file_list = &curr->file_descriptor_table;
+	while (!list_empty(file_list)) {
+		//printf("어디야2\n");
+		struct fd_structure *file = list_entry(list_pop_front(file_list), struct fd_structure, elem);
+		file_close(file->current_file);
+		//palloc_free_page(file);
+		free(file);
+	}
+
+	// child list에 있는 애들도 모두 없애줘야 함. 고아가 될 수는 없잖아!
+	struct list_elem *dont_be_orphan = list_begin(&curr->my_child);
+	while (!list_empty(&curr->my_child)) {
+		printf("어디야3\n");
+		dont_be_orphan = list_remove(dont_be_orphan);
+	}
 
 	process_cleanup ();
 

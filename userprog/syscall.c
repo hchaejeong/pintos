@@ -467,6 +467,7 @@ close (int fd) {
 		//우리는 각 파일 원소들을 thread안에 리스트로 관리하고 있기 때문에 이 리스트에서 없애주고 할당된 공간도 없애줘야한다
 		struct list_elem curr_elem = fd_elem->elem;
 		list_remove(&curr_elem);
+		//palloc_free_page(fd_elem);
 		free(fd_elem);
 	}
 }
@@ -540,18 +541,24 @@ exec (const char *file) {
 	// 0이 아닌 PAL_ZERO를 사용해야함.
 	char *file_name = palloc_get_page(PAL_ZERO);
 	int file_size = strlen(file) + 1;
+
+	int exec_result;
 	if (file_name == NULL) {
 		exit(-1);
 	} else {
 		strlcpy(file_name, file, file_size);
-		if (process_exec(file_name) < 0) {
+		exec_result = process_exec(file_name);
+		palloc_free_page(file_name);
+		if (exec_result < 0) {
+		//if (process_exec(file_name) < 0) {
 			exit(-1);
 			//return -1;
 		}
 	}
-
+	thread_current()->exit_num = exec_result;
 	NOT_REACHED(); // 이 명령어를 넣어야 이 명령어의 도달 여부를 알 수 있음
-	return 0;
+	//return 0;
+	return exec_result;
 }
 
 int
