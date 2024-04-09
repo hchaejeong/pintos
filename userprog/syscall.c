@@ -356,19 +356,21 @@ read (int fd, void *buffer, unsigned size) {
 		uint8_t key = input_getc();	 //user가 입력하도록 기다리고 입력하는 키보드 key를 반환한다
 		lock_release(&file_lock);
 	}
-
 	struct fd_structure *fd_elem = find_by_fd_index(fd);
 	if (fd_elem == NULL) {
 		//exit(-1);
 		read_bytes = -1;
 	} else {
 		//지금 fd에 맞는 파일을 뽑아오고 이 파일을 읽어줘야한다
-		lock_acquire(&file_lock);
 		struct file *curr_file = fd_elem->current_file;
-		read_bytes = (int) file_read(curr_file, buffer, size);
+		if (curr_file == NULL) {
+			return -1;
+		}
+		lock_acquire(&file_lock);
+		//struct file *curr_file = fd_elem->current_file;
+		read_bytes = file_read(curr_file, buffer, size);
 		lock_release(&file_lock);
 	}
-
 	return read_bytes;
 }
 
@@ -483,7 +485,7 @@ find_by_fd_index(int fd) {
 			return curr_fd_elem;
 		}
 
-		curr_elem = list_next(curr_fdt);
+		curr_elem = list_next(curr_elem);
 	}
 
 	//다 찾아봤는데 없으면 NULL을 반환하도록
