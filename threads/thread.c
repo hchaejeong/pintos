@@ -41,6 +41,7 @@ static struct thread *initial_thread;
 
 /* Lock used by allocate_tid(). */
 static struct lock tid_lock;
+//extern struct lock file_lock;
 
 /* Thread destruction requests */
 static struct list destruction_req;
@@ -119,6 +120,7 @@ thread_init (void) {
 	// init을 하면 empty list가 만들어지는 거니까,
 	// 우리가 sleep_list에 add해주는 상황에서만 wake_up_time에 맞춰서 추가해주면 됨
 	list_init (&destruction_req);
+	//lock_init (&file_lock);
 
 	/* Set up a thread structure for the running thread. */
 	initial_thread = running_thread ();
@@ -247,6 +249,23 @@ thread_create (const char *name, int priority,
 	t->tf.cs = SEL_KCSEG;
 	t->tf.eflags = FLAG_IF;
 
+	// struct list *fd_table = (struct list *) malloc(sizeof(struct list));
+	// t->file_descriptor_table = *fd_table;
+	// if (t->file_descriptor_table == NULL) {
+	// 	return TID_ERROR;
+	// }
+
+	// 이제 여기서, 현재 실행되는 current thread의 child list에 여기서 새롭게 만든 스레드를 추가해야함.
+	// 내가 이걸 추가를 안해서..... 계속 main인 상태에서 wait만 오질나게 하고 fork가 안되고 있었던 거임
+	// 이걸 하니까 child list가 empty가 아님!!
+	//printf("current thread name: %s\n", &thread_current()->name);
+	//printf("new thread name: %s\n", &t->name);
+	//printf("new thread tid: %d\n", t->tid);
+	//printf("list size in thread.c: %d\n", list_size(&thread_current()->my_child)); // 아 처음부터 사이즈는 1이네. init한 상태가 1인가봄
+	//list_push_back(&thread_current()->my_child, &t->my_child_elem);
+	list_push_front(&thread_current()->my_child, &t->my_child_elem); // 아니 왜 ㅋㅋㅋㅋ back을 front로 아무 생각 없이 바꿨는데 되냐고 ㅋㅋㅋㅋ...진짜 왜???????
+	//printf("list size in thread.c: %d\n", list_size(&thread_current()->my_child));
+
 	/* Add to run queue. */
 	thread_unblock (t);
 
@@ -261,6 +280,13 @@ thread_create (const char *name, int priority,
 	if (check_ready_priority_is_high()) {
 		thread_yield();
 	}
+
+	// 이제 여기서, 현재 실행되는 current thread의 child list에 여기서 새롭게 만든 스레드를 추가해야함.
+	// 내가 이걸 추가를 안해서..... 계속 main인 상태에서 wait만 오질나게 하고 fork가 안되고 있었던 거임
+	// 이걸 하니까 child list가 empty가 아님!!
+	// printf("current thread name: %s\n", thread_current()->name);
+	// printf("new thread name: %s\n", &t->name);
+	// list_push_back(&thread_current()->my_child, &t->my_child_elem);;
 
 	return tid;
 }
@@ -858,6 +884,21 @@ init_thread (struct thread *t, const char *name, int priority) {
 	//initialize nice and recent_cpu
 	t->nice = running_thread()->nice;
 	t->recent_cpu = running_thread()->recent_cpu;
+
+	list_init(&t->file_descriptor_table);
+	t->executing_file = NULL;
+
+	// exit num도 init해야함
+	t->exit_num = 0;
+
+	// sema도 init. fork에서 사용하는 것이므로 0으로 init
+	// 0이면 부모가 자식이 다 load 될 때까지 기다리다가 자식이 1로 sema up하면 그때 다시 실행될 수 있도록!
+	sema_init(&t->sema_for_fork, 0);
+	sema_init(&t->sema_for_wait, 0);
+	sema_init(&t->sema_for_exit, 0);
+
+	// child list도 init
+	list_init(&(t->my_child));
 
 }
 

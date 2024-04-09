@@ -18,9 +18,12 @@
 #include "threads/mmu.h"
 #include "threads/vaddr.h"
 #include "intrinsic.h"
+#include "userprog/syscall.h"
 #ifdef VM
 #include "vm/vm.h"
 #endif
+
+//struct lock *file_lock;
 
 static void process_cleanup (void);
 static bool load (const char *file_name, struct intr_frame *if_);
@@ -55,6 +58,16 @@ process_create_initd (const char *file_name) {
 	/* Create a new thread to execute FILE_NAME. */
 	//command line을 파싱해서 얻은 파일 이름을 넘겨주고 thread을 새로 만든다 
 	tid = thread_create (strtok_r(file_name, " ", &parsed), PRI_DEFAULT, initd, fn_copy);
+	/*
+	struct thread *child;
+	for (struct list_elem *children = list_begin(&thread_current()->my_child); children != list_end(&thread_current()->my_child); children = list_next(children)) {
+		child = list_entry(children, struct thread, my_child_elem);
+		if (child->tid == tid) {
+			break;
+		}
+	}
+	sema_down(&(child->sema_for_fork));
+	*/
 	if (tid == TID_ERROR)
 		palloc_free_page (fn_copy);
 	return tid;
@@ -79,8 +92,44 @@ initd (void *f_name) {
 tid_t
 process_fork (const char *name, struct intr_frame *if_ UNUSED) {
 	/* Clone current thread to new thread.*/
-	return thread_create (name,
-			PRI_DEFAULT, __do_fork, thread_current ());
+	//return thread_create(name, PRI_DEFAULT, __do_fork, thread_current());
+	
+	//printf("여기도 안 들어가?\n"); // 안 들어가네...
+	struct thread *parent = thread_current();
+	// do fork에 적어놨듯이, 현재 자신의 if를 미리 저장해놔야 나중에 fork하면서 자식에게 if가 전달됨
+	memcpy(&parent->if_for_fork, if_, sizeof(struct intr_frame));
+	// 자식(+본인) thread의 tid 생성
+	tid_t new_thread = thread_create (name, PRI_DEFAULT, __do_fork, thread_current());
+	if (new_thread == TID_ERROR) {
+		return TID_ERROR;
+	}
+	//return new_thread;
+	///*
+	struct list *children = &parent->my_child;
+	struct list_elem *child;
+	if (list_empty(children)) {
+		return TID_ERROR;
+	}
+	for (child = list_begin(children); child != list_end(children); child = list_next(child)) {
+		if (new_thread = list_entry(child, struct thread, my_child_elem)->tid) {
+			break;
+		}
+	}
+	if (child == list_end(children)) {
+		return TID_ERROR;
+	}
+	struct thread *real_child = list_entry(child, struct thread, my_child_elem);
+	if (real_child == NULL) {
+		return TID_ERROR;
+	}
+
+	sema_down(&real_child->sema_for_fork);
+	if (real_child->exit_num == -1) {
+		return TID_ERROR;
+	}
+
+	return new_thread;
+	//*/
 }
 
 #ifndef VM
@@ -95,21 +144,53 @@ duplicate_pte (uint64_t *pte, void *va, void *aux) {
 	bool writable;
 
 	/* 1. TODO: If the parent_page is kernel page, then return immediately. */
-
+	// 하라는 대로 하자
+	
+	if (is_kernel_vaddr(va)) {
+		//return false; // 난 커널에 있는게 에러라고 생각하고 false를 반환했는데, 아니다.
+		// false를 반환해버리면, 그냥 duplicate가 중단되는 것이다.
+		// 하지만 true를 반환하면 그냥 이 커널 파트에서 duplicate하지 않고 넘어가게 되는 것이므로
+		// 나중에라도 또 할수있는거라고 이해했음!!
+		return true;
+	}
+	
 	/* 2. Resolve VA from the parent's page map level 4. */
 	parent_page = pml4_get_page (parent->pml4, va);
 
 	/* 3. TODO: Allocate new PAL_USER page for the child and set result to
 	 *    TODO: NEWPAGE. */
+	void *for_child_page = palloc_get_page(PAL_USER); // child를 위한 새로운 page 만듦
 
 	/* 4. TODO: Duplicate parent's page to the new page and
 	 *    TODO: check whether parent's page is writable or not (set WRITABLE
 	 *    TODO: according to the result). */
-
+	if (parent_page == NULL || for_child_page == NULL) {
+		return false;
+	}
+	memcpy(for_child_page, parent_page, PGSIZE); // parent page를 child page로 duplicate
+	if (is_writable(pte)) {
+		writable = true;
+	} else {
+		writable = false;
+	} // parent page를 가리키는 포인터는 pte. writable하면 writable을 true로, 아니면 false로.
+	
 	/* 5. Add new page to child's page table at address VA with WRITABLE
 	 *    permission. */
+	// 아 걍 newpage가 child page였구나... ㅜ
+	
+	if (for_child_page != NULL) {
+		newpage = for_child_page;
+	} else {
+		return false; // child page가 제대로 생성이 안된거임
+	}
+	
+
 	if (!pml4_set_page (current->pml4, va, newpage, writable)) {
 		/* 6. TODO: if fail to insert page, do error handling. */
+		//pml4_destroy(current->pml4);
+		//current->exit_num = -1;
+		palloc_free_page(newpage);
+		return false; // 당연히 fail하면 false 반환해야지
 	}
 	return true;
 }
@@ -128,8 +209,18 @@ __do_fork (void *aux) {
 	struct intr_frame *parent_if;
 	bool succ = true;
 
+	//printf("do fork는 출력됨?/n"); // 아니 안 출력됨...
+	// 여기서 if_를 어떻게 넘겨줘야 하는건지 고민하라고 적혀있다.
+	// 여기서, do fork로 들어가는 애는 자식인 것이다. 그러면, do fork 하기 전에
+	// thread_current의 자신의 if를 저장해두면 된다.
+	// 그니까 결국에 do fork 하기 전에 자기 자신의 if를 저장해 둔다음에
+	// do fork를 하면 자식이 복제가 되는 거니까 그 상황에서 미리 저장해둔 자신의 (이제는 부모의) if를 받을 수 있는 것
+	parent_if = &parent->if_for_fork;
+
 	/* 1. Read the cpu context to local stack. */
 	memcpy (&if_, parent_if, sizeof (struct intr_frame));
+	// children process의 return값은 0이어야 함
+	//if_.R.rax = 0;
 
 	/* 2. Duplicate PT */
 	current->pml4 = pml4_create();
@@ -143,6 +234,10 @@ __do_fork (void *aux) {
 		goto error;
 #else
 	if (!pml4_for_each (parent->pml4, duplicate_pte, parent))
+		// 여기서, duplicate_pte를 썼기 때문에 일단은 child를 가리키는 pte는 생긴거임!
+		// 그리고 페이지 세팅까지 끝난거다. 이제는 파일 내용만 복사하면 됨.
+		// 위에서 kernel이더라도 true를 반환했을때, 이유가 여기 있다.
+		// parent와 child에게 각각 pml4가 있지 않은 상태로 반환된거기 때문에 어차피 에러가 처리됨!
 		goto error;
 #endif
 
@@ -151,13 +246,78 @@ __do_fork (void *aux) {
 	 * TODO:       in include/filesys/file.h. Note that parent should not return
 	 * TODO:       from the fork() until this function successfully duplicates
 	 * TODO:       the resources of parent.*/
+	// exit status도 parent랑 똑같이 해줘야하나..?
+	//current->exit_num = parent->exit_num;
 
+	// 위 내용 요약) 파일 복제하려면 file_duplicate를 써라.
+	// parent의 내용 모두 다 복사하기 전까지는 return하면 안된다.
+	// 파일의 내용은 file_descriptor에 들어있다. 이내용들을 모두 복사하면 됨!
+	///*
+	struct list *parent_files = &parent->file_descriptor_table;
+	struct list *child_files = &current->file_descriptor_table;
+	for (struct list_elem *file = list_begin(parent_files); file != list_end(parent_files); file = list_next(file)) {
+		// file이 비어있든 아니든 우리는 list 형태니까 그냥 다 복제해야 한다
+		struct fd_structure *fd = list_entry(file, struct fd_structure, elem);
+		struct file *real_file = fd->current_file;
+		// file이 null이던말던 fd만 null이 아니면, null 그대로 해놓고 다른 요소들 복제하면 됨
+		// 아니다... file이 null이면 이건 문제가 있는거다.
+		if (fd == NULL) {
+			goto error;
+			//continue;
+		} else {
+			//struct fd_structure *new_fd = calloc(1, sizeof(struct fd_structure));
+			struct fd_structure *new_fd = palloc_get_page(0);
+			if (new_fd == NULL) {
+				goto error;
+			}
+			if (real_file == NULL) {
+				// fd는 null이 아닌데 file이 null인 경우
+				// 만약 child의 그 자리에 이미 파일이 있으면 어떡하지..?
+				//new_fd->current_file = NULL;
+				//new_fd->fd_index = fd->fd_index;
+				goto error;
+			} else {
+				// file이 있으면 duplicate
+				new_fd->current_file = file_duplicate(real_file);
+				if (new_fd->current_file == NULL) {
+					goto error;
+				}
+				new_fd->fd_index = fd->fd_index;
+				list_push_back(child_files, &(new_fd->elem));
+			}
+			
+			// new_fd->current_file = file_duplicate(real_file);
+			// new_fd->fd_index = fd->fd_index;
+			// list_push_back(child_files, &(new_fd->elem));
+			//list_insert_ordered(child_files, &new_fd->elem, compare_fd_func, NULL);
+		}
+	}
+	//*/
+	// curr fd도 똑같이 세팅
+	//current->curr_fd = parent->curr_fd;
+	
+	// 자식의 file 복사가 모두 끝났으므로 sema up
+	//sema_up(&current->sema_for_fork);
 	process_init ();
+	// children process의 return값은 0이어야 함
+	if_.R.rax = 0;
+	current->if_for_fork.R.rax = 0;
+
+	// 자식의 file 복사가 모두 끝났으므로 sema up
+	sema_up(&current->sema_for_fork);
+	// 대신에 parent의 sema는 down
+	sema_down(&parent->sema_for_fork);
 
 	/* Finally, switch to the newly created process. */
 	if (succ)
-		do_iret (&if_);
+		// parent의 child list에 본인을 추가해줘야 한다!
+		//list_push_back(&parent->my_child, &current->my_child_elem); // 두 번이나 추가해주는 꼴인가?
+		do_iret (&if_); 
 error:
+	// 에러가 나도 일단 sema는 up해야. 안그러면 더이상 안돌아가잖아...
+	sema_up(&current->sema_for_fork);
+	sema_down(&parent->sema_for_fork);
+	current->exit_num = -1;
 	thread_exit ();
 }
 
@@ -174,6 +334,8 @@ process_exec (void *f_name) {
 	 * This is because when current thread rescheduled,
 	 * it stores the execution information to the member. */
 	//user프로그램을 실행할때 필요한 정보를 포함 - stores the registers of the user space
+	//interrupt frame은 인터럽트가 호출되었을때 이전에 레지스터에 작업하던 context 정보를 스택에 담는 구조체
+	//커널모드에서 유저모드로 바뀔때 결국 interrupt가 발생하기 때문에 유저스택을 가지고 오기 위해 커널 스택내에서 이 intr frame을 만들어서 받아와야한다
 	struct intr_frame _if;
 	_if.ds = _if.es = _if.ss = SEL_UDSEG;
 	_if.cs = SEL_UCSEG;
@@ -218,12 +380,25 @@ process_exec (void *f_name) {
 	/* And then load the binary */
 	//_if와 file_name을 현재 프로세스에 로드한다 (성공: 1, 실패: 0)
 	//load 함수의 설명: Stores the executable's entry point into *RIP and its initial stack pointer into *RSP
-	success = load (file_name, &_if);
+	success = load (program_name, &_if);
+
+	//sema_up(&thread_current()->sema_for_fork);
+
+	// load를 하자마자 success 여부를 판단해야 한다. (exec-missing test에서 뜬 에러)
+	// 그러지 않으면, strlcpy(frame -> rsp, command_line_args[i], strlen(command_line_args[i]) + 1);
+	// 부분에서 page fault 에러가 뜬다! program_name이 이상하면 rsp도 이상하니까,
+	// 위에서 copy하면서 (~while까지) command_line_args[i]의 부분들이 그럼 null이 되니까.
+	if (!success)
+	 {
+		palloc_free_page (file_name);
+		return -1;
+	 }
 
 	//가장 마지막으로 추가된 parameter부터 푸시가 되어야하니까 현재 command_line_args 포인터가 포인트하고 있는게 마지막으로 추가된 위치 + 1일것이다
 	//char *last_elem_index = command_line_args - 1;
 	//int로 카운트를 따라야하기때문에 parameter_index를 사용해서 오른쪽부터 왼쪽까지 iterate한다
 
+	//유저가 요청한 프로세스를 수행하기 위한 interrupt frame 구조체 내 정보를 유저 커널 스택에 쌓는다
 	//단어 데이터를 저장 해놓기 (order 상관없으니 그냥 첫 단어부터 넣기로 하자)
 	//null pointer sentinel도 있기 때문에 parameter_index부터 시작해서 strlen + 1만큼 loop해야한다
 	struct intr_frame * frame = &_if;
@@ -286,18 +461,20 @@ process_exec (void *f_name) {
 	frame -> rsp -= 8;
 	memset(frame -> rsp, 0, sizeof(void *));
 
-	hex_dump(_if.rsp , _if.rsp , USER_STACK - (uint64_t)_if.rsp, true);
+	//hex_dump(_if.rsp , _if.rsp , USER_STACK - (uint64_t)_if.rsp, true);
 
 	/* If load failed, quit. */
 	//load를 끝내면 해당 메모리를 반환해야 한다
-	palloc_free_page (file_name);
+	//palloc_free_page (file_name);
 
-	if (!success)
-		return -1;
+	// if (!success)
+	// 	return -1;
 
 	/* Start switched process. */
-	//load가 실행되면 context switching을 시킨다
+	//do_iret을 통해서 실제로 사용자 프로세스로 넘어가게 된다 
 	do_iret (&_if);
+	//load를 끝내면 해당 메모리를 반환해야 한다
+	palloc_free_page (file_name);
 	NOT_REACHED ();
 }
 
@@ -317,10 +494,55 @@ process_wait (tid_t child_tid UNUSED) {
 	 * XXX:       to add infinite loop here before
 	 * XXX:       implementing the process_wait. */
 	//bool temporary = true;
-	for (int i = 0; i < 1000000000; i++) {
-
+	//for (int i = 0; i < 1000000000; i++) {}
+	///*
+	//printf("child tid: %d\n", child_tid);
+	//printf("왜그래\n");
+	struct thread *parent = thread_current();
+	//printf("cur thread name: %s\n", parent->name); // main
+	// fork에서 썼던거 그대로 가져와도 될듯!!
+	struct list *children = &parent->my_child;
+	//printf("list empty?: %d\n", list_empty(children)); // main의 children list는 비어있음
+	if (list_empty(children)) {
+		return -1;
 	}
-	return -1;
+	struct list_elem *child;
+	//printf("왜그래\n");
+	//printf("parent thread name: %s\n", parent->name);
+	//printf("list size: %d\n", (int) list_size(children)); // 왜 2지?? thread.c에서 확인해 본 결과 만들때부터 1이 되는가봄.
+	for (child = list_begin(children); child != list_end(children); child = list_next(child)) {
+		//printf("child name: %s\n", list_entry(child, struct thread, my_child_elem)->name);
+		if (child_tid = list_entry(child, struct thread, my_child_elem)->tid) {
+			break;
+		}
+	}
+	//printf("왜그래\n");
+	if (child == list_end(children)) {
+		//printf("여긴가\n"); // 여기임. 끝까지 갔으면 음 그냥 sema up 시켜줘야 하는거?
+		return -1;
+	}
+	//printf("왜그래\n");
+	struct thread *real_child = list_entry(child, struct thread, my_child_elem);
+	//ASSERT(real_child == NULL); // 이렇게 real_child가 null이면... 일단 fork할 때 list에 안들어가진건가
+	//printf("real_child name: %s\n", real_child->name);
+	//printf("real_child tid: %d\n", real_child->tid);
+	if (real_child == NULL) {
+		return -1;
+	}
+	sema_up(&parent->sema_for_fork);
+	sema_down(&real_child->sema_for_wait); // parent가 wait하다가
+	// 그러면 여기서 child가 열심히 돌아가다가 이제 exit 될거고,
+	// exit 되면 sema up을 하면서 자신의 exit_num이 나올 것!
+	int child_exit_num = real_child->exit_num;
+	//printf("child exit num: %d\n", child_exit_num); // 아니 근데 이거 원래 출력 안 됐는데 갑자기 되는 이유좀???
+	// 앞에서 list_push_front로 바꾸고 나서부터인가....
+	list_remove(&real_child->my_child_elem); // child는 일 다 끝났으니까 리스트에서 지움
+	//printf("list size: %d\n", list_size(children)); // 왜 1이지??
+	sema_up(&real_child->sema_for_exit);
+
+	return child_exit_num;
+	//*/
+	//return -1;
 }
 
 /* Exit the process. This function is called by thread_exit (). */
@@ -331,8 +553,45 @@ process_exit (void) {
 	 * TODO: Implement process termination message (see
 	 * TODO: project2/process_termination.html).
 	 * TODO: We recommend you to implement process resource cleanup here. */
+	
+	//printf("여기는 출력 되나\n"); // 안되네...
 
+	// termination message를 확인해보니
+	/* (exit) begin
+		exit: exit(57) */
+	// 이런 식으로 뜬다. 그러면 exit 숫자를 그대로 적으면 되는건가!
+	//printf("%s: exit(%d)\n", curr->name, curr->exit_num);
+	// 아니 이렇게 적으면 project 1에서도 저 exit가 뜸... 아니 여기서 저 print 적으라매 진짜 너무해
+	//printf("file이 뭘까: %d\n", curr->executing_file);
+	if (curr->executing_file != NULL) {
+		file_allow_write(curr->executing_file); // 쓸 수 있게 해준 뒤
+		file_close(curr->executing_file); // 삭제해야함
+		curr->executing_file = NULL;
+		palloc_free_page(curr->executing_file);
+	}
+	//file_close(curr->executing_file);
+
+	// 현 thread에 있는 모든 파일들을 닫아줘야함
+	struct list *file_list = &curr->file_descriptor_table;
+	while (!list_empty(file_list)) {
+		struct fd_structure *file = list_entry(list_pop_front(file_list), struct fd_structure, elem);
+		file_close(file->current_file);
+		palloc_free_page(file);
+	}
+
+	// child list에 있는 애들도 모두 없애줘야함. 고아가 될수는 없자나?
+	struct list_elem *dont_be_orphan = list_begin(&curr->my_child);
+	while (!list_empty(&curr->my_child)) {
+		dont_be_orphan = list_remove(dont_be_orphan);
+	}
+
+	// list_remove(&curr->my_child_elem); // 이걸 해주는 순간, fork-once시켰을 때 child exit status를 81이 아니라 -1로 만드는 이유이다
 	process_cleanup ();
+
+	// child가 exit하면, wait sema를 올려준다!
+	sema_up(&curr->sema_for_wait);
+	// 부모가 exit 할 때까지 기다린다
+	sema_down(&curr->sema_for_exit);
 }
 
 /* Free the current process's resources. */
@@ -535,13 +794,17 @@ load (const char *file_name, struct intr_frame *if_) {
 
 	/* TODO: Your code goes here.
 	 * TODO: Implement argument passing (see project2/argument_passing.html). */
-	
+   
+	//오픈된 파일에는 write가 일어나지 않도록 deny file write을 해줘야한다
+	file_deny_write(file);
+	//deny write으로 막아놓은 다음에 파일을 실행시킬수있도록
+	t -> executing_file = file;
 
 	success = true;
 
 done:
 	/* We arrive here whether the load is successful or not. */
-	file_close (file);
+	//file_close (file); // 여기서 말고 exit할 때 닫게 해야함
 	return success;
 }
 
