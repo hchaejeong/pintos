@@ -240,10 +240,10 @@ __do_fork (void *aux) {
 	for (struct list_elem *file = list_begin(parent_files); file != list_end(parent_files); file = list_next(file)) {
 		// file이 비어있든 아니든 우리는 list 형태니까 그냥 다 복제해야 한다
 		struct fd_structure *fd = list_entry(file, struct fd_structure, elem);
-		struct file *real_file = fd->current_file;
+		struct file *real_file = file_duplicate(fd->current_file);
 		// file이 null이던말던 fd만 null이 아니면, null 그대로 해놓고 다른 요소들 복제하면 됨
 		if (fd == NULL) {
-			continue;
+			goto error;
 		} else {
 			struct fd_structure *new_fd = calloc(1, sizeof(struct fd_structure));
 			//struct fd_structure *new_fd = palloc_get_page(0);
@@ -259,10 +259,14 @@ __do_fork (void *aux) {
 				new_fd->fd_index = fd->fd_index;
 			}
 			*/
-			new_fd->current_file = file_duplicate(real_file);
-			new_fd->fd_index = fd->fd_index;
-			list_push_back(child_files, &(new_fd->elem));
-			//list_insert_ordered(child_files, &new_fd->elem, compare_fd_func, NULL);
+			if (new_fd == NULL) {
+				goto error;
+			} else {
+				new_fd->current_file = real_file;
+				new_fd->fd_index = fd->fd_index;
+				list_push_back(child_files, &(new_fd->elem));
+				//list_insert_ordered(child_files, &new_fd->elem, compare_fd_func, NULL);
+			}
 		}
 	}
 	//*/
@@ -280,6 +284,7 @@ __do_fork (void *aux) {
 		do_iret (&if_); 
 error:
 	// 에러가 나도 일단 sema는 up해야. 안그러면 더이상 안돌아가잖아...
+	current->exit_num = TID_ERROR;
 	sema_up(&current->sema_for_fork);
 	thread_exit ();
 }
@@ -522,7 +527,7 @@ process_exit (void) {
 	// 아니 이렇게 적으면 project 1에서도 저 exit가 뜸... 아니 여기서 저 print 적으라매 진짜 너무해
 	//printf("file이 뭘까: %d\n", curr->executing_file);
 	if (curr->executing_file != NULL) {
-		printf("어디야1\n");
+		//printf("어디야1\n");
 		file_allow_write(curr->executing_file); // 쓸 수 있게 해준 뒤
 		file_close(curr->executing_file); // 삭제해야함!
 		curr->executing_file = NULL;
@@ -543,7 +548,7 @@ process_exit (void) {
 	// child list에 있는 애들도 모두 없애줘야 함. 고아가 될 수는 없잖아!
 	struct list_elem *dont_be_orphan = list_begin(&curr->my_child);
 	while (!list_empty(&curr->my_child)) {
-		printf("어디야3\n");
+		//printf("어디야3\n");
 		dont_be_orphan = list_remove(dont_be_orphan);
 	}
 

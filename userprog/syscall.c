@@ -548,7 +548,7 @@ exec (const char *file) {
 	} else {
 		strlcpy(file_name, file, file_size);
 		exec_result = process_exec(file_name);
-		palloc_free_page(file_name);
+		//palloc_free_page(file_name);
 		if (exec_result < 0) {
 		//if (process_exec(file_name) < 0) {
 			exit(-1);
