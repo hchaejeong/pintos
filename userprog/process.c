@@ -88,34 +88,36 @@ process_fork (const char *name, struct intr_frame *if_ UNUSED) {
 	struct thread *parent = thread_current();
 	// do fork에 적어놨듯이, 현재 자신의 if를 미리 저장해놔야 나중에 fork하면서 자식에게 if가 전달됨
 	memcpy(&parent->if_for_fork, if_, sizeof(struct intr_frame));
-	// 자식(+본인) thread의 tid 생성
+	// 자식(+본인) thread의 tid 생성. thread_create를 하자마자 child list에 넣어져있음!
 	tid_t new_thread = thread_create (name, PRI_DEFAULT, __do_fork, thread_current());
 	if (new_thread == TID_ERROR) {
 		return TID_ERROR;
 	}
-	//return new_thread;
-	///*
+
 	struct list *children = &parent->my_child;
 	struct list_elem *child;
 	if (list_empty(children)) {
 		return TID_ERROR;
 	}
+	// children list를 돌면서 tid가 일치하는 thread를 찾음
 	for (child = list_begin(children); child != list_end(children); child = list_next(child)) {
 		if (new_thread == list_entry(child, struct thread, my_child_elem)->tid) {
 			break;
 		}
 	}
+	// 끝까지 돌았다는 건 child list에 없다는거니까 에러.
 	if (child == list_end(children)) {
 		return TID_ERROR;
 	}
+	// 진짜 child를 적어주고, fork sema를 down함으로써 child의 process가 끝날 때까지 parent는 대기
 	struct thread *real_child = list_entry(child, struct thread, my_child_elem);
 	sema_down(&real_child->sema_for_fork);
+	// 만약 child가 error로 돌아왔으면 당연히 에러
 	if (real_child->exit_num == -1) {
 		return TID_ERROR;
 	}
 
 	return new_thread;
-	//*/
 }
 
 #ifndef VM
@@ -171,7 +173,7 @@ duplicate_pte (uint64_t *pte, void *va, void *aux) {
 
 	if (!pml4_set_page (current->pml4, va, newpage, writable)) {
 		/* 6. TODO: if fail to insert page, do error handling. */
-		palloc_free_page(newpage);
+		palloc_free_page(newpage); // new page도 새로운 palloc을 한 것이므로 free 해줘야 함
 		return false; // 당연히 fail하면 false 반환해야지
 	}
 	return true;
@@ -247,24 +249,18 @@ __do_fork (void *aux) {
 		} else {
 			struct fd_structure *new_fd = calloc(1, sizeof(struct fd_structure));
 			//struct fd_structure *new_fd = palloc_get_page(0);
-			/*
 			if (real_file == NULL) {
 				// fd는 null이 아닌데 file이 null인 경우
 				// 만약 child의 그 자리에 이미 파일이 있으면 어떡하지..?
-				new_fd->current_file = NULL;
-				new_fd->fd_index = fd->fd_index;
-			} else {
-				// file이 있으면 duplicate
-				new_fd->current_file = file_duplicate(real_file);
-				new_fd->fd_index = fd->fd_index;
-			}
-			*/
-			if (new_fd == NULL) {
+				goto error;
+			} else if (new_fd == NULL) {
+				// calloc 한게 이상하면 또 error
 				goto error;
 			} else {
+				// 정상인 경우
 				new_fd->current_file = real_file;
 				new_fd->fd_index = fd->fd_index;
-				list_push_back(child_files, &(new_fd->elem));
+				list_push_back(child_files, &(new_fd->elem)); // child list에 넣는다!
 				//list_insert_ordered(child_files, &new_fd->elem, compare_fd_func, NULL);
 			}
 		}
@@ -273,7 +269,7 @@ __do_fork (void *aux) {
 	// curr fd도 똑같이 세팅
 	current->curr_fd = parent->curr_fd;
 	
-	// 자식의 file 복사가 모두 끝났으므로 sema up
+	// 자식의 file 복사가 모두 끝났으므로 sema up, 그래서 이제 parent가 이어서 진행할 수 있음
 	sema_up(&current->sema_for_fork);
 	process_init ();
 

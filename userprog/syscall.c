@@ -86,9 +86,9 @@ syscall_handler (struct intr_frame *f UNUSED) {
 		// %rax는 system call number이라고 적혀있다
 		// include/lib/user/syscall.h에는 구현해야할 모든 경우?가 다 적혀있다.
 		// 레지스터의 순서는 %rdi, %rsi, %rdx, %r10, %r8, %r9임!
-		uint64_t arg1 = f->R.rdi;
-		uint64_t arg2 = f->R.rsi;
-		uint64_t arg3 = f->R.rdx;
+		// uint64_t arg1 = f->R.rdi;
+		// uint64_t arg2 = f->R.rsi;
+		// uint64_t arg3 = f->R.rdx;
 
 		case (SYS_HALT):
 			halt();
@@ -556,7 +556,7 @@ exec (const char *file) {
 		}
 	}
 	thread_current()->exit_num = exec_result;
-	NOT_REACHED(); // 이 명령어를 넣어야 이 명령어의 도달 여부를 알 수 있음
+	//NOT_REACHED(); // 이 명령어를 넣어야 이 명령어의 도달 여부를 알 수 있음
 	//return 0;
 	return exec_result;
 }
