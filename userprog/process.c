@@ -554,6 +554,8 @@ process_exit (void) {
 	sema_up(&curr->sema_for_wait);
 	// 부모가 exit 할 때까지 기다린다
 	sema_down(&curr->sema_for_exit);
+
+	// proj3_hany setting을 위한
 }
 
 /* Free the current process's resources. */
