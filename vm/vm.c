@@ -172,7 +172,11 @@ vm_try_handle_fault (struct intr_frame *f UNUSED, void *addr UNUSED,
 	struct page *page = NULL;
 	/* TODO: Validate the fault */
 	/* TODO: Your code goes here */
-
+	//search the disk, allocate the page frame and load the appropriate page from the disk to the allocated page
+	//일단 주어진 address가 valid한지 체크를 먼저 하자
+	if (is_kernel_vaddr(addr)) {
+		return false;
+	}
 
 	return vm_do_claim_page (page);
 }
