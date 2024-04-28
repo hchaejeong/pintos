@@ -64,9 +64,12 @@ struct page {
 };
 
 /* The representation of "frame" */
+// frame은 pa와 매핑할 때 필요함.
+// 결국에는 기존 pml4 table에 없는 정보를 추가적으로 저장하기 위해 사용됨.
 struct frame {
-	void *kva;
+	void *kva; // kernel va
 	struct page *page;
+	struct list_elem elem; // list로 사용하기 위함. page도 page table, pml4도 table이니까 frame도 table형태로!
 };
 
 /* The function table for page operations.
