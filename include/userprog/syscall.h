@@ -18,10 +18,6 @@ struct fd_structure {
 
 void syscall_init (void);
 
-bool
-compare_fd_func (const struct list_elem *a,
-                  const struct list_elem *b,
-                  void *aux);
 // 여기서도 함수 선언해줘야 함
 //void syscall_handler (struct intr_frame * UNUSED);
 
