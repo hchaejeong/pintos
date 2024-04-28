@@ -20,7 +20,6 @@
 
 
 struct lock file_lock;
-//int fd_init;
 
 void syscall_entry (void);
 void syscall_handler (struct intr_frame *);
@@ -70,8 +69,6 @@ syscall_init (void) {
 	
 	//여러 프로세스가 같은 파일을 사용하지 않도록 락을 걸어놓자
 	lock_init(&file_lock);
-	//syscall말고 일반 파일이 들어갈 수 있는 fd 초기화
-	fd_init = 2;
 }
 
 /* The main system call interface */
@@ -223,16 +220,6 @@ remove (const char *file) {
 	return status;
 }
 
-bool
-compare_fd_func (const struct list_elem *a,
-                  const struct list_elem *b,
-                  void *aux) {
-   struct fd_structure *a_fd_elem = list_entry(a, struct fd_structure, elem);
-   struct fd_structure *b_fd_elem = list_entry(b, struct fd_structure, elem);
-
-   return a_fd_elem->fd_index < b_fd_elem->fd_index;
-}
-
 //Opens the file called file. 
 //Returns a nonnegative integer  called a "file descriptor" (fd), 
 //or -1 if the file could not be opened.
@@ -262,10 +249,6 @@ open (const char * file) {
 	int fd;
 	if (fd_elem != NULL) {
 		// lock_acquire(&file_lock);
-		
-		// fd_elem->current_file = actual_file;
-		// fd_elem->fd_index = fd_init;
-		// fd_init++;
 
 		// lock_release(&file_lock);
 		if (list_empty(curr_fdt)) {
@@ -292,14 +275,9 @@ open (const char * file) {
 		//lock_release(&file_lock);
 		return -1;		//새로운 파일 열 공간이 부족한 경우 open되지 않기 때문에 -1을 리턴한다.
 	}
-	// fd_init++;
 	
-
-	//list_insert_ordered(curr_fdt, &fd_elem->elem, compare_fd_func, NULL);
-
 	//파일이 제대로 잘 열렸으면 지금 fd 원소의 파일에 저장해놓는다
 	//fd_elem->current_file = actual_file;
-	//fd_init++;
 	//각 프로세스마다 자신만의 file descriptors을 가지고 있다 - child processes
 	//현재 fdt 리스트의 맨 뒤에 넣기 때문에 현재 최대 index보다 1을 increment해줘야한다.
 	// if (!fdt_empty) {
@@ -313,9 +291,6 @@ open (const char * file) {
 	// 	list_push_back(curr_fdt, &curr_elem);
 	// }
 	
-  
-	//lock_release(&file_lock);
-
 	//lock release한 다음에 결과를 반환해줘야한다
 	return fd + 1;
 }
