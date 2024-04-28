@@ -239,9 +239,8 @@ vm_do_claim_page (struct page *page) {
 	// gitbook 설명대로라면, 위에서 vm_get_page로 frame을 갖고 온 다음에,
 	// MMU를 setting해준다. 즉, page table 안에서 va와 pa를 mapping하는걸 추가한다.
 	// 그리고, 잘 완료되었으면 true, 아니면 false를 반환한다
-	//int mapping_va_pa = install_page(page->va, frame->kva, page->writable);
-	//int mapping_va_pa = install_page(page->va, frame->kva, is_writable(page));
-	int mapping_va_pa = pml4_set_page(page->va, frame->kva, is_writable(page));
+	//bool mapping_va_pa = install_page(page->va, frame->kva, page->write);
+	bool mapping_va_pa = pml4_set_page(&thread_current()->pml4, page->va, frame->kva, page->write);
 	if (mapping_va_pa) {
 		return swap_in (page, frame->kva);
 	} else {
