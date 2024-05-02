@@ -142,6 +142,11 @@ page_fault (struct intr_frame *f) {
 
 #ifdef VM
 	/* For project 3 and later. */
+	//page fault가 일어나면 user에서 커널로 control이 바뀌기 때문에 현재 유저 프로그램에서 rsp를 thread에 저장해놔야한다
+	if (user) {
+		thread_current()->user_stack_rsp = f->rsp;
+	}
+
 	if (vm_try_handle_fault (f, fault_addr, user, write, not_present))
 		return;
 #endif

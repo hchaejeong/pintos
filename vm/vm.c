@@ -74,6 +74,7 @@ vm_alloc_page_with_initializer (enum vm_type type, void *upage, bool writable,
 		} else if (VM_TYPE(type) == VM_FILE) {
 			uninit_new(new_page, upage, init, type, aux, file_backed_initializer);
 		} 
+		//uninit_new하기전에 정보를 넣는건 무의미, 아예 새로 할당되기 때문에 안에 있었던거는 다 날라간다
 
 		//유저한테 다시 control을 준다
 		//writable을 인자로 받았으니 이 속성을 페이지에 업데이트 시켜줘야한다
@@ -92,10 +93,11 @@ spt_find_page (struct supplemental_page_table *spt UNUSED, void *va UNUSED) {
 	struct page *page = NULL;
 	/* TODO: Fill this function. */
 	//spt에서 해당 va를 가지고 있는 페이지를 빼오는거기 때문에 hash search 함수들을 이용하면 될거같다
-	page->va = pg_round_down(va);
+	struct page p;
+	p.va = pg_round_down(va);
 
 	struct hash_elem *elem;
-	elem = hash_find(&(spt->page_table), &page->hash_elem);
+	elem = hash_find(&(spt->page_table), &(p.hash_elem));
 	if (elem == NULL) {
 		return NULL; 
 	}
@@ -179,7 +181,23 @@ vm_get_frame (void) {
 
 /* Growing the stack. */
 static void
-vm_stack_growth (void *addr UNUSED) {
+vm_stack_growth (void *addr) {
+	void *adjusted_addr = pg_round_down(addr);
+	// struct page *found_page = spt_find_page(&thread_current()->spt, adjusted_addr);
+	// // allocating one or more pages so that addr is no longer faulted이라고 하니까 
+	// // 한번만 alloc하는게 아니라 가능할동안 계속 할당해주는거다
+	// while (found_page == NULL) {
+	// 	bool alloc_success = vm_alloc_page(VM_ANON | VM_MARKER_STACK, adjusted_addr, true);
+	// 	bool claim_success = vm_claim_page(adjusted_addr);
+	// 	//다음 페이지 주소로 내려간 후 다시 alloc 시도해서 가능하면 계속 페이지 단위로 할당해준다
+	// 	if (alloc_success && claim_success) {
+	// 		memset(adjusted_addr, 0, PGSIZE);
+	// 		adjusted_addr += PGSIZE;
+	// 	}
+	// 	found_page = spt_find_page(&thread_current()->spt, adjusted_addr);
+	// }
+
+	vm_alloc_page(VM_ANON | VM_MARKER_STACK, pg_round_down(addr), true);
 }
 
 /* Handle the fault on write_protected page */
@@ -189,15 +207,62 @@ vm_handle_wp (struct page *page UNUSED) {
 
 /* Return true on success */
 bool
-vm_try_handle_fault (struct intr_frame *f UNUSED, void *addr UNUSED,
-		bool user UNUSED, bool write UNUSED, bool not_present UNUSED) {
-	struct supplemental_page_table *spt UNUSED = &thread_current ()->spt;
+vm_try_handle_fault (struct intr_frame *f, void *addr,
+		bool user, bool write, bool not_present) {
+	struct supplemental_page_table *spt = &thread_current ()->spt;
 	struct page *page = NULL;
 	/* TODO: Validate the fault */
 	/* TODO: Your code goes here */
+	//search the disk, allocate the page frame and load the appropriate page from the disk to the allocated page
+	//일단 주어진 address가 valid한지 체크를 먼저 하자
+	//rsp가 유저스택을 가르키고 있으면 이 스택 포인터를 그대로 써도 되는데 커널 스택을 가르키고 있다면 유저->커널로 바뀔때의 thread내의 rsp를 사용해야된다
+	bool success = true;
+	//유저는 자신의 가상공간만 접근할 수 있기 때문에 커널 가상 메모리에 접근하려고 하면 바로 프로세스 종료 시켜야한다
+	if (is_kernel_vaddr(addr) && user || addr == NULL || not_present == false) {
+		success = false;
+	} else {	//not_present인 경우에는 물리 프레임이 할당되지 않아서 발생한 fault이기 때문에 이때 페이지랑 물리 프레임을 연결시켜준다
+		//spt에서 페이지 fault가 일어난 페이지를 찾아야한다
+		const int STACK_SIZE = 0x100 * PGSIZE;
+		//interrupt frame의 rsp주소를 받아와서 이게 커널 영역인지 유저 스택 영역인지 체크하고 
+		//유저프로그램에서 fault 발생한 경우에는 그냥 이 rsp를 가지고 쓰고 커널에서 발생한거면 쓰레드에 저장해놓은 유저 스택 rsp정보를 받아와야한다
+		uintptr_t pointer = f->rsp;
+		if (!user) {
+			pointer = &thread_current() -> user_stack_rsp;
+		}
 
-
-	return vm_do_claim_page (page);
+		//일단 stack의 1MB 범위내에 addr가 있는지 확인을 하자
+		if (addr <= USER_STACK && pointer - 8 >= USER_STACK - STACK_SIZE && addr == pointer - 8) {
+			//현재 addr가 현재 유저 스택의 가장 아래 위치보다 더 아래 위치를 접근하려고 하면 스택을 더 크게 늘려줘야한다
+			vm_stack_growth(addr);
+		} else if (addr <= USER_STACK && pointer >= USER_STACK - STACK_SIZE && addr >= pointer) {
+			vm_stack_growth(addr);
+		}
+		
+		page = spt_find_page(spt, addr);
+		//NOT_REACHED();
+		if (page != NULL) {
+			if (write && page->write == false) {
+				//읽기 전용 페이지에 쓰려고 한 경우는 불가능하다
+				success = false;
+			} else {
+				//spt에 이미 들어가있는 페이지이기 때문에 이걸 물리 프레임이랑 매핑해준다
+				success = vm_do_claim_page(page);
+			}
+		} else {
+			// if (not_present &&
+			// 	addr >= (void *) (f->rsp - 8) &&
+			// 	addr >= (void *) (USER_STACK - 0x100 * PGSIZE) &&
+			// 	addr < (void *) USER_STACK) {
+			// 		vm_stack_growth (addr);
+			// 		success = true;
+			// } else {
+			// 	success = false;
+			// }
+			success = false;
+		}
+	}
+	
+	return success;
 }
 
 /* Free the page.
@@ -261,6 +326,7 @@ supplemental_page_table_init (struct supplemental_page_table *spt UNUSED) {
 bool
 supplemental_page_table_copy (struct supplemental_page_table *dst UNUSED,
 		struct supplemental_page_table *src UNUSED) {
+	
 }
 
 /* Free the resource hold by the supplemental page table */

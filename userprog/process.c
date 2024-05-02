@@ -926,6 +926,31 @@ lazy_load_segment (struct page *page, void *aux) {
 	/* TODO: Load the segment from the file */
 	/* TODO: This called when the first page fault occurs on address VA. */
 	/* TODO: VA is available when calling this function. */
+	//이전과 달리 segment를 physical frame에 직접 할당하는 방식 말고 
+	//spt에 필요한 정보들을 넣어놓고 page fault가 발생했을떄 (즉, 페이지가 요청될때)가 되어야 메모리에 load하는 방식
+	//첫번째 page fault가 발생하면 vm_do_claim_page에서 매핑이 이루어진 이후에 uninit_initialize함수가 호출되고
+	//그 안에서 각각 페이지 타입 별 초기화 함수와 내용을 로드하는 함수 (lazy load segment)가 호출된다
+	//여기서는 내용만 물리 프레임에 로딩하는 작업만 하면된다
+	bool load_done = true;
+	struct segment_info *load_info = (struct segment_info *)aux;
+	//find the file to read the segment from and read segment into memory
+	struct file *file = load_info->page_file;
+	off_t offset = load_info->offset;
+	size_t page_read_bytes = load_info->read_bytes;
+	size_t page_zero_bytes = load_info->zero_bytes;
+	void *buffer = page->frame->kva;
+	//파일 위치를 찾아야한다
+	file_seek(file, offset);
+	//offset에 담긴 파일을 물리 프레임으로부터 읽어야하기 때문에 page의 frame에 접근해서 kernel의 주소를 사용해서 읽는다
+	off_t read_info = file_read(file, buffer, page_read_bytes);
+	if (read_info != (int) page_read_bytes) {
+		palloc_free_page(buffer);
+		load_done = false;
+	} else {
+		memset(buffer + page_read_bytes, 0, page_zero_bytes);
+	}
+
+	return load_done;
 }
 
 /* Loads a segment starting at offset OFS in FILE at address
@@ -957,15 +982,24 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 		size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
 		/* TODO: Set up aux to pass information to the lazy_load_segment. */
-		void *aux = NULL;
+		//넘겨줘야하는 내용은 file, offset, read_bytes, zero_bytes이렇게 넘겨줘야하기 때문에 아예 structure으로 만들어서 넘겨주도록 하자
+		struct segment_info *load_info = (struct segment_info *)malloc(sizeof (struct segment_info));
+		load_info->page_file = file;
+		load_info->offset = ofs;
+		load_info->read_bytes = page_read_bytes;
+		load_info->zero_bytes = page_zero_bytes;
+		//vm_alloc_page 함수를 호출해서 페이지를 생성해주는거다
+		//여기서 5번째 인자인 aux가 페이지에 로드할 내용이고 4번째 인자인 lazy_load_segment가 이 내용물을 넣어주는 함수이다
 		if (!vm_alloc_page_with_initializer (VM_ANON, upage,
-					writable, lazy_load_segment, aux))
+					writable, lazy_load_segment, load_info))
+			//이 과정에서 lazy_load_segment을 호출한뒤 반환값을 vm_alloc의 인자로 넣는다
 			return false;
 
 		/* Advance. */
 		read_bytes -= page_read_bytes;
 		zero_bytes -= page_zero_bytes;
 		upage += PGSIZE;
+		ofs += PGSIZE;
 	}
 	return true;
 }
@@ -974,12 +1008,29 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 static bool
 setup_stack (struct intr_frame *if_) {
 	bool success = false;
+	//stack은 아래로 커지기 때문에 stack의 시작점인 USER_STACK에서 페이지 사이즈만큼 아래로 내린 지점을 이 stack_bottom으로 하고 여기에 페이지를 생성한다
+	//stack 역시 하나의 anonymous 페이지라고 생각할 수 있다
+	//user program에서 함수가 호출되면 리턴값이 쌓이게 되는데 이때 스택 페이지에 접근해서 해당 내용을 적는다
 	void *stack_bottom = (void *) (((uint8_t *) USER_STACK) - PGSIZE);
 
 	/* TODO: Map the stack on stack_bottom and claim the page immediately.
 	 * TODO: If success, set the rsp accordingly.
 	 * TODO: You should mark the page is stack. */
 	/* TODO: Your code goes here */
+	//초기화된 UNINIT한 페이지를 하나 생성
+	bool page_init = vm_alloc_page_with_initializer(VM_ANON | VM_MARKER_STACK, stack_bottom, true, NULL, NULL);
+	if (!page_init) {
+		return success;
+	} else {
+		//할당받은 페이지에 바로 물리 프레임을 매핑해준다
+		//스택은 바로 사용하기 때문에 어차피 써야할 페이지에 대해서 물리 프레임을 연결해주는 함수이다
+		if (vm_claim_page(stack_bottom)) {
+			//페이지가 스택이라고 마크해줘야한다
+			if_->rsp = USER_STACK;
+			//thread_current()->user_stack_rsp = stack_bottom;
+			success = true;
+		}
+	}
 
 	return success;
 }

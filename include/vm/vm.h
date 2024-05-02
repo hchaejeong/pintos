@@ -20,6 +20,7 @@ enum vm_type {
 	 * markers, until the value is fit in the int. */
 	VM_MARKER_0 = (1 << 3),
 	VM_MARKER_1 = (1 << 4),
+	VM_MARKER_STACK = (1 << 5),
 
 	/* DO NOT EXCEED THIS VALUE. */
 	VM_MARKER_END = (1 << 31),
@@ -81,6 +82,14 @@ struct page_operations {
 	bool (*swap_out) (struct page *);
 	void (*destroy) (struct page *);
 	enum vm_type type;
+};
+
+//파일 내용을 lazy_load_segment으로 넘겨줄때 필수적으로 넘겨줘야하는 정보들
+struct segment_info {
+	struct file *page_file;
+	off_t offset;
+	size_t read_bytes;
+	size_t zero_bytes;
 };
 
 #define swap_in(page, v) (page)->operations->swap_in ((page), v)

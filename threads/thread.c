@@ -900,6 +900,8 @@ init_thread (struct thread *t, const char *name, int priority) {
 	// child list도 init
 	list_init(&(t->my_child));
 
+	//user stack rsp주소를 저장하기 위해 초기화 시켜놓는다
+	t->user_stack_rsp = 0;
 }
 
 /* Chooses and returns the next thread to be scheduled.  Should

@@ -17,7 +17,7 @@
 #include "threads/synch.h"
 #include "threads/init.h"
 #include "devices/input.h"
-
+#include "vm/vm.h"
 
 struct lock file_lock;
 
@@ -79,6 +79,10 @@ syscall_handler (struct intr_frame *f UNUSED) {
 	// 그리고, 여기서부터는 레지스터를 사용해야 한다. 이건 include/threads/interrupt.h에 있다!
 	// intr_frame 안에는 register 모임?인 R이 있고, R 안에는 깃헙 io링크에 있는 %rax 이런애들이 다 있다!
 	//NOT_REACHED();
+	#ifdef VM
+		thread_current()->user_stack_rsp = f->rsp;
+	#endif
+
 	switch (f->R.rax) {
 		// %rax는 system call number이라고 적혀있다
 		// include/lib/user/syscall.h에는 구현해야할 모든 경우?가 다 적혀있다.
@@ -167,8 +171,9 @@ check_address(void *address) {
 	}
 
 	//bad ptr인 경우 user virtual address에서 없는 경우일때 무조건 바로 exit하도록해야함.
-	struct thread *current = thread_current();
-	if (pml4_get_page(current->pml4, address) == NULL) {
+	//struct thread *current = thread_current();
+
+	if (spt_find_page(&thread_current()->spt, address) == NULL) {
 		exit(-1);
 	}
 }
