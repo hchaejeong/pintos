@@ -129,7 +129,27 @@ static struct frame *
 vm_get_victim (void) {
 	struct frame *victim = NULL;
 	 /* TODO: The policy for eviction is up to you. */
-
+	 // 여기서 policy는 up to u라고 하긴 하는데, 일단 알려준대로 해야겠지?
+	 // 그러면, 1이라고 access bit이 표시 된 애는 최근에 참조된 애고
+	 // 0인 애들은 최근에 참조가 안 된 애들이다. 그러면 이제 얘네들이 지워져도 되는것임!
+	 // 그럼 일단, frame list를 쭉 돌아본다. 여기서 1인 애들은 0으로 바꿔주고,
+	 // 0인 애들은 victim인 것이다.
+	 for (struct list_elem *frame = list_begin(&frame_list); frame = list_end(&frame_list); frame = list_next(frame)) {
+		victim = list_entry(frame, struct frame, elem);
+		if (pml4_is_accessed(thread_current()->pml4, victim->page->va)) {
+			// recently하게 방문되었으면 true를 반환해줌. 따라서, 이렇게 최근에 반환된 애들은 이제 0으로 세팅해주면 됨
+			pml4_set_accessed(thread_current()->pml4, victim->page->va, false);
+		} else {
+			break; // 이러면 이제 공개적으로 0인 애들이니까 얘를 반환하면 됨
+		}
+	 }
+	 
+	 if (victim == list_entry(list_end(&frame_list), struct frame, elem)) {
+		// 만약에 이 for문이 끝까지 갔다면, 이 frame list 안에서 victim이 없다는 말임. 다 최근에 access되었다는 뜻이겠지..
+		// 그러면 이제 여기서도 앞 for문에서 0으로 바꿔주었기 때문에, 무조건 첫 번쨰 애가 0이겠지
+		// 그러면 그냥 첫 번째 애를 반환하면 될듯!!
+		victim = list_entry(list_begin(&frame_list), struct frame, elem);
+	 }
 	return victim;
 }
 
@@ -139,8 +159,11 @@ static struct frame *
 vm_evict_frame (void) {
 	struct frame *victim UNUSED = vm_get_victim ();
 	/* TODO: swap out the victim and return the evicted frame. */
-
-	return NULL;
+	// victim frame을 swap out하고, 이렇게 완전 비워진 frame을 return하는 함수임!
+	// 즉, 이미 최근에 access되었으면 통과, 아니면 victim으로 select 되어야 한다.
+	swap_out(victim->page); // vm_get_victim을 통해 victim을 get해야 한다
+	return victim;
+	//return NULL;
 }
 
 /* palloc() and get frame. If there is no available page, evict the page
@@ -150,12 +173,12 @@ vm_evict_frame (void) {
 static struct frame *
 vm_get_frame (void) {
 	//struct frame *frame = NULL;
-	struct frame *frame;
+	// struct frame *frame;
 	/* TODO: Fill this function. */
 	// gitbook을 보면 이걸 제일 먼저 채우라고 적혀있음
 	// 위 설명을 읽어보면, 
 	/* 1. user pool로부터 새로운 physical page를 얻는다 (palloc_get_page 이용) */
-	frame = (struct frame*)malloc(sizeof(struct frame)); // 먼저 크기 배정
+	struct frame *frame = (struct frame*)malloc(sizeof(struct frame)); // 먼저 크기 배정
 	frame->kva = palloc_get_page(PAL_USER); // user pool로부터 새로운 page 얻음
 	// 여기서, 만약 이미 빈 페이지였다면 그냥 그대로 return하면 되는데,
 	// 이미 frame이 다 차 있어서 빈 페이지가 더이상 남아있지 않다면 victim을 쫓아내고 빈칸으로 만들어야 함
@@ -172,7 +195,9 @@ vm_get_frame (void) {
 		// victim을 evict하고, 새로운 frame으로 비운다
 		// 위에 보니 vm_evict_frame()이라는 함수를 사용해야 하는 것 같음
 		// 근데 gitbook에는 일단 panic("todo")를 사용하라고 적혀있는 것 같은데...
-		PANIC("todo");
+		//PANIC("todo");
+		frame = vm_evict_frame();
+		frame->page = NULL; // null로 해주는건, 일단 page를 reset (init)해주는 과정임!
 	}
 	return frame;
 }
