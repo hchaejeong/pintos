@@ -144,6 +144,9 @@ struct thread {
 #ifdef VM
 	/* Table for whole virtual memory owned by thread. */
 	struct supplemental_page_table spt;
+
+	//쓰레드에 이전에 저장해놨던 유저 스택의 rsp 주소를 저장하고 있어야한다
+	uintptr_t user_stack_rsp;
 #endif
 
 	/* Owned by thread.c. */
