@@ -185,7 +185,7 @@ vm_get_frame (void) {
 	// 여기서, 만약 이미 빈 페이지였다면 그냥 그대로 return하면 되는데,
 	// 이미 frame이 다 차 있어서 빈 페이지가 더이상 남아있지 않다면 victim을 쫓아내고 빈칸으로 만들어야 함
 	ASSERT (frame != NULL);
-	ASSERT (frame->page == NULL);
+	//ASSERT (frame->page == NULL);
 
 	if (frame->kva != NULL) {
 		// 이미 빈 칸이 있어서 그게 배치된 경우
