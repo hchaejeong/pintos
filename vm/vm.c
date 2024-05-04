@@ -184,8 +184,8 @@ vm_get_frame (void) {
 	frame->kva = palloc_get_page(PAL_USER); // user pool로부터 새로운 page 얻음
 	// 여기서, 만약 이미 빈 페이지였다면 그냥 그대로 return하면 되는데,
 	// 이미 frame이 다 차 있어서 빈 페이지가 더이상 남아있지 않다면 victim을 쫓아내고 빈칸으로 만들어야 함
-	ASSERT (frame != NULL);
-	//ASSERT (frame->page == NULL);
+	// ASSERT (frame != NULL);
+	// ASSERT (frame->page == NULL);
 
 	if (frame->kva != NULL) {
 		// 이미 빈 칸이 있어서 그게 배치된 경우
@@ -201,6 +201,9 @@ vm_get_frame (void) {
 		frame = vm_evict_frame();
 		frame->page = NULL; // null로 해주는건, 일단 page를 reset (init)해주는 과정임!
 	}
+	ASSERT (frame != NULL);
+	ASSERT (frame->page == NULL); // 이렇게 위에서 page->NULL을 해줘야 이걸 통과하는 거였다. page를 init하는 과정 뒤에 놨어야 했는데 내가 븅신이지...
+
 	return frame;
 }
 
