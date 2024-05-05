@@ -2,12 +2,17 @@
 
 #include "vm/vm.h"
 #include "devices/disk.h"
+#include "threads/mmu.h"
+#include "threads/vaddr.h"
 
 /* DO NOT MODIFY BELOW LINE */
 static struct disk *swap_disk;
 static bool anon_swap_in (struct page *page, void *kva);
 static bool anon_swap_out (struct page *page);
 static void anon_destroy (struct page *page);
+
+/* swap을 위한 table이 필요함 - bitmap을 이용해야 */
+struct bitmap *swap_list;
 
 /* DO NOT MODIFY this struct */
 static const struct page_operations anon_ops = {
@@ -21,7 +26,11 @@ static const struct page_operations anon_ops = {
 void
 vm_anon_init (void) {
 	/* TODO: Set up the swap_disk. */
-	swap_disk = NULL;
+	//swap_disk = NULL;
+
+	/* bitmap을 사용하여 init해주면 됨 */
+	swap_disk = disk_get(1, 1);
+	swap_list = bitmap_create(disk_size(swap_disk) / 8);
 }
 
 /* Initialize the file mapping */

@@ -140,6 +140,12 @@ syscall_handler (struct intr_frame *f UNUSED) {
 		case (SYS_CLOSE):
 			close((int) f->R.rdi);
 			break;
+		case (SYS_MMAP):
+			f->R.rax = mmap((void *) f->R.rdi, (size_t) f->R.rsi, (int) f->R.rdx, (int) f->R.r10, (off_t) f->R.r8);
+			break;
+		case (SYS_MUNMAP):
+			munmap((void *) f->R.rdi);
+			break;
 		default:
 			printf ("system call!\n");
 			thread_exit ();
@@ -544,4 +550,83 @@ exec (const char *file) {
 int
 wait(tid_t pid) {
 	return process_wait(pid);
+}
+
+void *mmap(void *addr, size_t length, int writable, int fd, off_t offset) {
+	/* 그냥 mmap 함수에 대한 설명:
+	length bytes를 map하는데, addr 위치의 process의 va space에 함.
+	전체 file은 addr부터 시작하는 연속적인 virtual page에 map됨.
+	length가 PGSIZE의 배수가 아니면, 몇 byte는 EOF 넘어서 약간 "stick out"됨.
+	page fault 할때는, 이렇게 튀어나온 byte들을 zero로 set하고,
+	page가 disk로 written back했을 때 삭제한다.
+	만약 성공하면, file이 map된 va를 return한다.
+	실패하면, NULL을 반환한다. */
+	/* 파일의 길이 == 0이면 fail.
+	addr이 page-aligned가 아니거나, page의 range가 이미 존재하는 mapped pages set에 overlap하면 fail.
+	(executable load time에 stack이나 page가 mapping되는 것 포함)
+	Linux에서는, addr == NULL이면 mapping을 create할 수 있는 addr을 kernel이 찾음
+	즉, 그냥 given addr로 mmap을 attempt하면 됨.
+	이에 따라 addr == 0이면 무조건 fail할 것 - pintos code는 virtual page 0은 mapped 되어있지 않다고 판단하기 때문
+	fd가 console I/O를 represent하는 것도 map이 불가함. (fail)
+	length == 0이면 mmap은 fail. */
+	/* anon page처럼 lazy: page object 만들 때 vm_alloc_page_with_initializer or vm_alloc_page 이용 */
+
+	// 하나하나씩 천천히 해보자.
+	
+	if (length <= 0) {
+		/* length == 0 */
+		return NULL;
+	} else if (fd == 0 || fd == 1) {
+		/* I/O인 경우는 fail */
+		return NULL;
+	} else if (addr == NULL) {
+		/* addr == NULL이면 무조건 fail */
+		return NULL;
+	} else if (pg_round_down(addr) != addr) {
+		/* addr이 page aligned가 아닌 경우 fail */
+		return NULL;
+	} else if (is_kernel_vaddr(addr)) {
+		/* 당연히 kernel이면 fail */
+		return NULL;
+	} else if (spt_find_page(&thread_current()->spt, addr)) {
+		/* overlap하는 경우는 fail */
+		return NULL;
+	} else if (pg_round_down(offset) != offset) {
+		/* 이 또한 offset이 이상한 위치인 경우임. fail */
+		return NULL;
+	} else {
+		/* 일단은 이제 파일을 열 수 있는 조건이 되었음 */
+		struct fd_structure* fd_elem = find_by_fd_index(fd);
+		struct file *file = fd_elem->current_file;
+		if (file == NULL) {
+			/* file이 NULL이면 fail */
+			return NULL;
+		} else if (file_length(file) == 0) {
+			/* 파일의 길이 == 0이면 fail */
+			return NULL;
+		} else if (file_length(file) <= offset) {
+			/* offset byte부터 시작하는 file이 offset보다 작으면 당연히 fail이겠지 */
+			return NULL;
+		} else {
+			/* 이제 최종적으로 do_mmap 할 수 있음! */
+			return do_mmap(addr, length, writable, file, offset);
+		}
+	}
+}
+
+void munmap(void *addr) {
+	/* munmap 함수 설명:
+	addr 주변 특정 range부분의 mapping된 걸 unmmap하는 역할.
+	page들이 다시 file에 쓰여지고, 안 쓰여진 페이지는 쓰이면 안 됨.
+	unmap되므로, virtual page list에서 page가 제거되어야 함 */
+	/* 모든 mapping은 exit이 발동되면 무조건 unmap됨.
+	unmap될 때는, process가 썼던 모든 page들이 file로 written back되고, 안 쓰여진 애들은 written되면 안된다.
+	그리고 page들은 process의 list of virtual pages에서 사라진다
+	file을 close or remove하는건 unmap이랑은 아무 관련이 없음.
+	각 mapping마다 seperate & independent한 ref를 쓰려면 file_reopen 함수를 쓰는 것임.
+	2개 이상의 process가 같은 file에 map되어있을 때,
+	각 process가 consistent datafmf 볼 수 있는 requirement는 없음. */
+
+	// 그냥 여기서는 아무 상관없이, do_munmap으로만 가면 되는듯?
+	do_munmap(addr);
 }

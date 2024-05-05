@@ -175,12 +175,13 @@ vm_evict_frame (void) {
 static struct frame *
 vm_get_frame (void) {
 	//struct frame *frame = NULL;
-	// struct frame *frame;
+	//struct frame *frame;
 	/* TODO: Fill this function. */
 	// gitbook을 보면 이걸 제일 먼저 채우라고 적혀있음
 	// 위 설명을 읽어보면, 
 	/* 1. user pool로부터 새로운 physical page를 얻는다 (palloc_get_page 이용) */
 	struct frame *frame = (struct frame*)malloc(sizeof(struct frame)); // 먼저 크기 배정
+	//frame = (struct frame*)malloc(sizeof(struct frame)); // 먼저 크기 배정
 	frame->kva = palloc_get_page(PAL_USER); // user pool로부터 새로운 page 얻음
 	// 여기서, 만약 이미 빈 페이지였다면 그냥 그대로 return하면 되는데,
 	// 이미 frame이 다 차 있어서 빈 페이지가 더이상 남아있지 않다면 victim을 쫓아내고 빈칸으로 만들어야 함
@@ -323,6 +324,10 @@ vm_claim_page (void *va UNUSED) {
 static bool
 vm_do_claim_page (struct page *page) {
 	struct frame *frame = vm_get_frame ();
+
+	if (frame == NULL) {
+		return false; // get frame 했는데 NULL이면 당연히 mapping 불가하므로 false 반환
+	}
 
 	/* Set links */
 	frame->page = page;
