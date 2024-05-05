@@ -247,46 +247,39 @@ vm_try_handle_fault (struct intr_frame *f, void *addr,
 	bool success = true;
 	//유저는 자신의 가상공간만 접근할 수 있기 때문에 커널 가상 메모리에 접근하려고 하면 바로 프로세스 종료 시켜야한다
 	if (is_kernel_vaddr(addr) && user || addr == NULL || not_present == false) {
-		success = false;
+		return false;
 	} else {	//not_present인 경우에는 물리 프레임이 할당되지 않아서 발생한 fault이기 때문에 이때 페이지랑 물리 프레임을 연결시켜준다
 		//spt에서 페이지 fault가 일어난 페이지를 찾아야한다
-		const int STACK_SIZE = 0x100 * PGSIZE;
-		//interrupt frame의 rsp주소를 받아와서 이게 커널 영역인지 유저 스택 영역인지 체크하고 
-		//유저프로그램에서 fault 발생한 경우에는 그냥 이 rsp를 가지고 쓰고 커널에서 발생한거면 쓰레드에 저장해놓은 유저 스택 rsp정보를 받아와야한다
-		uintptr_t pointer = f->rsp;
-		if (!user) {
-			pointer = &thread_current() -> user_stack_rsp;
-		}
+		page = spt_find_page(spt, pg_round_down(addr));
+		if (page == NULL) {
+			//NOT_REACHED();
+			const int STACK_SIZE = 0x100 * PGSIZE;
+			//interrupt frame의 rsp주소를 받아와서 이게 커널 영역인지 유저 스택 영역인지 체크하고 
+			//유저프로그램에서 fault 발생한 경우에는 그냥 이 rsp를 가지고 쓰고 커널에서 발생한거면 쓰레드에 저장해놓은 유저 스택 rsp정보를 받아와야한다
+			uintptr_t pointer = f->rsp;
+			NOT_REACHED();
+			if (!user) {
+				pointer = &thread_current() -> user_stack_rsp;
+			}
 
-		//일단 stack의 1MB 범위내에 addr가 있는지 확인을 하자
-		if (addr <= USER_STACK && pointer - 8 >= USER_STACK - STACK_SIZE && addr == pointer - 8) {
-			//현재 addr가 현재 유저 스택의 가장 아래 위치보다 더 아래 위치를 접근하려고 하면 스택을 더 크게 늘려줘야한다
-			vm_stack_growth(addr);
-		} else if (addr <= USER_STACK && pointer >= USER_STACK - STACK_SIZE && addr >= pointer) {
-			vm_stack_growth(addr);
-		}
-		
-		page = spt_find_page(spt, addr);
-		//NOT_REACHED();
-		if (page != NULL) {
+			//일단 stack의 1MB 범위내에 addr가 있는지 확인을 하자
+			if (addr <= USER_STACK && pointer - 8 >= USER_STACK - STACK_SIZE && addr == pointer - 8) {
+				//현재 addr가 현재 유저 스택의 가장 아래 위치보다 더 아래 위치를 접근하려고 하면 스택을 더 크게 늘려줘야한다
+				vm_stack_growth(addr);
+			} else if (addr <= USER_STACK && pointer >= USER_STACK - STACK_SIZE && addr >= pointer) {
+				vm_stack_growth(addr);
+			} else {
+				success = false;
+			}
+		} else {
 			if (write && page->write == false) {
 				//읽기 전용 페이지에 쓰려고 한 경우는 불가능하다
 				success = false;
 			} else {
 				//spt에 이미 들어가있는 페이지이기 때문에 이걸 물리 프레임이랑 매핑해준다
+				//NOT_REACHED();
 				success = vm_do_claim_page(page);
 			}
-		} else {
-			// if (not_present &&
-			// 	addr >= (void *) (f->rsp - 8) &&
-			// 	addr >= (void *) (USER_STACK - 0x100 * PGSIZE) &&
-			// 	addr < (void *) USER_STACK) {
-			// 		vm_stack_growth (addr);
-			// 		success = true;
-			// } else {
-			// 	success = false;
-			// }
-			success = false;
 		}
 	}
 	
