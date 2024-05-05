@@ -5,6 +5,7 @@ struct page;
 enum vm_type;
 
 struct anon_page {
+    struct segment_info *aux;
 };
 
 void vm_anon_init (void);

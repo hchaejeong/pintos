@@ -24,7 +24,7 @@ struct lock file_lock;
 void syscall_entry (void);
 void syscall_handler (struct intr_frame *);
 
-void check_address(void *address);
+struct page* check_address(void *address);
 
 void halt(void);
 bool create (const char * file, unsigned initial_size);
@@ -156,7 +156,7 @@ syscall_handler (struct intr_frame *f UNUSED) {
 
 // lock_acquire할때 현재 돌아가고 있는 쓰레드가 락을 이미 가지고 있는데 요청한거면
 // 필요없으니 
-void 
+struct page* 
 check_address(void *address) {
 	// if (address >= LOADER_PHYS_BASE) {
 	// 	exit(-1);
@@ -178,10 +178,12 @@ check_address(void *address) {
 
 	//bad ptr인 경우 user virtual address에서 없는 경우일때 무조건 바로 exit하도록해야함.
 	//struct thread *current = thread_current();
-
-	if (spt_find_page(&thread_current()->spt, address) == NULL) {
+	struct page *pg = spt_find_page(&thread_current()->spt, address);
+	if (pg == NULL) {
 		exit(-1);
-	}
+	} 
+
+	return pg;
 }
 
 void
@@ -331,8 +333,12 @@ filesize (int fd) {
 //실제로 읽은 byte 사이즈를 반환하고 파일을 읽지 못한 경우에는 -1을 반환시킨다
 int
 read (int fd, void *buffer, unsigned size) {
-	check_address(buffer);
-	check_address(buffer + size - 1);
+	struct page *start = check_address(buffer);
+	struct page *end = check_address(buffer + size - 1);
+
+	if (start->write == false || end->write == false) {
+		exit(-1);
+	}
 
 	int read_bytes = 0;
 
@@ -364,8 +370,8 @@ read (int fd, void *buffer, unsigned size) {
 //실제로 써지는 byte만큼을 반환한다 - 안 써지는 byte들도 있을수 있기 때문에 size 보다 더 작은 반환값이 나올수있따
 int
 write (int fd, const void *buffer, unsigned size) {
-	check_address(buffer);
-	check_address(buffer + size - 1);
+	struct page *start = check_address(buffer);
+	struct page *end = check_address(buffer + size - 1);
 	//printf("doing write syscall");
 
 	int write_bytes = 0;
