@@ -225,7 +225,7 @@ vm_stack_growth (void *addr) {
 	// 	found_page = spt_find_page(&thread_current()->spt, adjusted_addr);
 	// }
 
-	vm_alloc_page(VM_ANON | VM_MARKER_STACK, pg_round_down(addr), true);
+	vm_alloc_page(VM_ANON | VM_MARKER_STACK, adjusted_addr, true);
 }
 
 /* Handle the fault on write_protected page */
@@ -247,46 +247,39 @@ vm_try_handle_fault (struct intr_frame *f, void *addr,
 	bool success = true;
 	//유저는 자신의 가상공간만 접근할 수 있기 때문에 커널 가상 메모리에 접근하려고 하면 바로 프로세스 종료 시켜야한다
 	if (is_kernel_vaddr(addr) && user || addr == NULL || not_present == false) {
-		success = false;
+		return false;
 	} else {	//not_present인 경우에는 물리 프레임이 할당되지 않아서 발생한 fault이기 때문에 이때 페이지랑 물리 프레임을 연결시켜준다
 		//spt에서 페이지 fault가 일어난 페이지를 찾아야한다
-		const int STACK_SIZE = 0x100 * PGSIZE;
-		//interrupt frame의 rsp주소를 받아와서 이게 커널 영역인지 유저 스택 영역인지 체크하고 
-		//유저프로그램에서 fault 발생한 경우에는 그냥 이 rsp를 가지고 쓰고 커널에서 발생한거면 쓰레드에 저장해놓은 유저 스택 rsp정보를 받아와야한다
-		uintptr_t pointer = f->rsp;
-		if (!user) {
-			pointer = &thread_current() -> user_stack_rsp;
-		}
+		page = spt_find_page(spt, pg_round_down(addr));
+		if (page == NULL) {
+			//NOT_REACHED();
+			const int STACK_SIZE = 0x100 * PGSIZE;
+			//interrupt frame의 rsp주소를 받아와서 이게 커널 영역인지 유저 스택 영역인지 체크하고 
+			//유저프로그램에서 fault 발생한 경우에는 그냥 이 rsp를 가지고 쓰고 커널에서 발생한거면 쓰레드에 저장해놓은 유저 스택 rsp정보를 받아와야한다
+			uintptr_t pointer = f->rsp;
+			NOT_REACHED();
+			if (!user) {
+				pointer = &thread_current() -> user_stack_rsp;
+			}
 
-		//일단 stack의 1MB 범위내에 addr가 있는지 확인을 하자
-		if (addr <= USER_STACK && pointer - 8 >= USER_STACK - STACK_SIZE && addr == pointer - 8) {
-			//현재 addr가 현재 유저 스택의 가장 아래 위치보다 더 아래 위치를 접근하려고 하면 스택을 더 크게 늘려줘야한다
-			vm_stack_growth(addr);
-		} else if (addr <= USER_STACK && pointer >= USER_STACK - STACK_SIZE && addr >= pointer) {
-			vm_stack_growth(addr);
-		}
-		
-		page = spt_find_page(spt, addr);
-		//NOT_REACHED();
-		if (page != NULL) {
+			//일단 stack의 1MB 범위내에 addr가 있는지 확인을 하자
+			if (addr <= USER_STACK && pointer - 8 >= USER_STACK - STACK_SIZE && addr == pointer - 8) {
+				//현재 addr가 현재 유저 스택의 가장 아래 위치보다 더 아래 위치를 접근하려고 하면 스택을 더 크게 늘려줘야한다
+				vm_stack_growth(addr);
+			} else if (addr <= USER_STACK && pointer >= USER_STACK - STACK_SIZE && addr >= pointer) {
+				vm_stack_growth(addr);
+			} else {
+				success = false;
+			}
+		} else {
 			if (write && page->write == false) {
 				//읽기 전용 페이지에 쓰려고 한 경우는 불가능하다
 				success = false;
 			} else {
 				//spt에 이미 들어가있는 페이지이기 때문에 이걸 물리 프레임이랑 매핑해준다
+				//NOT_REACHED();
 				success = vm_do_claim_page(page);
 			}
-		} else {
-			// if (not_present &&
-			// 	addr >= (void *) (f->rsp - 8) &&
-			// 	addr >= (void *) (USER_STACK - 0x100 * PGSIZE) &&
-			// 	addr < (void *) USER_STACK) {
-			// 		vm_stack_growth (addr);
-			// 		success = true;
-			// } else {
-			// 	success = false;
-			// }
-			success = false;
 		}
 	}
 	
@@ -354,7 +347,49 @@ supplemental_page_table_init (struct supplemental_page_table *spt UNUSED) {
 bool
 supplemental_page_table_copy (struct supplemental_page_table *dst UNUSED,
 		struct supplemental_page_table *src UNUSED) {
-	
+	//when child needs to inherit execution code of its parent
+	//src의 spt의 모든 페이지 관련 정보들을 dst의 spt안에 넣는다
+	//src의 spt를 iterate해야하는데 이건 지금 hash table 구조체를 가지고 있으니 hash_iterator을 사용해야한다
+	bool success = true;
+	struct hash_iterator spt_iterator;
+	spt_iterator.hash = &(src->page_table);
+	//각 iteration마다 각 hash_elem랑 연결되어 있는 페이지를 찾아서 이 페이지를 dst의 spt에 넣도록 한다
+	hash_first(&spt_iterator, &(src->page_table));
+	while(hash_next(&spt_iterator)) {
+		struct page *src_page = hash_entry(hash_cur(&spt_iterator), struct page, hash_elem);
+		//vm_alloc에서 보이다시피 vm_type, upage, writable, init, aux 정보들을 다 담아서 dst spt안에 넣어줘야한다
+		enum vm_type src_page_type = src_page->operations->type;
+		if (src_page_type == VM_ANON) {
+			//일단 dst의 spt에 들어갈 pending 페이지를 하나 만들어주고 그 다음에 여기 안에 들어가야하는 정보들을 다 넣는다
+			//이렇게 vm_alloc 사용하면 spt_insert_page를 통해서 이 페이지가 spt에 들어간다
+			bool alloc_success = vm_alloc_page(src_page_type, src_page->va, src_page->write);
+			//즉, 이 페이지가 잘 들어갔는지 확인하기 위해서 spt_find_page를 사용해서 NULL인지 아닌지를 확인할 수 있다
+			struct page *dst_page = spt_find_page(dst, src_page->va);
+			if (dst_page == NULL) {
+				// success = false;
+				// break;
+				return false;
+			} 
+			//allocate한 후에 바로 claim을 해서 이 페이지랑 프레임으로 매핑시켜줘야한다
+			bool claim_success = vm_claim_page(src_page->va);
+			if (!claim_success) {
+				return false;
+			}
+			//매핑된 프레임에다가 내용을 넣어야한다
+			//src page의 프레임 주소에 맞는 커널 구역에 들어가서 여기에서의 하나의 프레임의 내용을 그래도 복사해서 dst의 해당 page에 맞는 프레임의 커널 구역에 내용 넣기
+			memcpy(dst_page->frame->kva, src_page->frame->kva, PGSIZE);
+		} else if (src_page_type == VM_UNINIT) {
+			vm_initializer *src_init = src_page->uninit.init;
+			void *src_aux = src_page->uninit.aux;
+			bool alloc_success = vm_alloc_page_with_initializer(src_page_type, src_page->va, src_page->write, src_init, src_aux);
+
+			if (!alloc_success) {
+				return false;
+			}
+			//continue;
+		}
+	}
+	return success;
 }
 
 /* Free the resource hold by the supplemental page table */
@@ -362,6 +397,14 @@ void
 supplemental_page_table_kill (struct supplemental_page_table *spt UNUSED) {
 	/* TODO: Destroy all the supplemental_page_table hold by thread and
 	 * TODO: writeback all the modified contents to the storage. */
+	//iterate through the spt and destroy(page) for all pages
+	struct hash_iterator spt_iterator;
+	hash_first(&spt_iterator, &(spt->page_table));
+	while (hash_next(&spt_iterator)) {
+		struct page *spt_page = hash_entry(hash_cur(&spt_iterator), struct page, hash_elem);
+		destroy(spt_page);
+		free(spt_page);
+	}
 }
 
 //spt를 해쉬테이블 구조로 쓰기 때문에 페이지 입력할때 어떻게 넣을지에 대한 해쉬 함수를 적어줘야한다

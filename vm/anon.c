@@ -2,6 +2,7 @@
 
 #include "vm/vm.h"
 #include "devices/disk.h"
+#include "threads/malloc.h"
 
 /* DO NOT MODIFY BELOW LINE */
 static struct disk *swap_disk;
@@ -49,4 +50,16 @@ anon_swap_out (struct page *page) {
 static void
 anon_destroy (struct page *page) {
 	struct anon_page *anon_page = &page->anon;
+	//이 페이지가 보유한 리소스를 해제하는거기 때문에 free까지는 할 필요 없다
+	struct segment_info *aux = anon_page->aux;
+	if (aux) {
+		file_close(aux->page_file);
+		free(aux);
+	}
+	//페이지랑 물리 프레임의 할당도 free해줘야한다
+	if (page->frame != NULL) {
+		list_remove(&(page->frame->elem));
+		free(page->frame);
+		page->frame = NULL;
+	}
 }
