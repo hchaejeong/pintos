@@ -67,7 +67,10 @@ vm_alloc_page_with_initializer (enum vm_type type, void *upage, bool writable,
 		//일단 type에 맞춘 uninitialized page를 하나 생성해주고 나중에 page fault가 발생하면 이 페이지에 주어진 vm_type에 맞게 초기화 될것
 		//지금 spt에 해당 페이지 (upage)가 없어야 새롭개 만들어주니까 이 if statement안에서 수행해야한다
 		//일단 allocate a new page니까 공간을 할당해줘야한다
+		/*
 		struct page *new_page = malloc(sizeof(struct page));
+		*/
+		struct page *new_page = (struct page*)malloc(sizeof(struct page));
 		//page type에 따라 appropriate initializer을 세팅해줘야한다
 		if (VM_TYPE(type) == VM_ANON) {
 			uninit_new(new_page, upage, init, type, aux, anon_initializer);
@@ -80,8 +83,13 @@ vm_alloc_page_with_initializer (enum vm_type type, void *upage, bool writable,
 		//writable을 인자로 받았으니 이 속성을 페이지에 업데이트 시켜줘야한다
 		new_page->write = writable;
 		/* TODO: Insert the page into the spt. */
+		/*
 		spt_insert_page(spt, new_page);
 		return true;
+		*/
+		return spt_insert_page(spt, new_page);
+	} else {
+		return false;
 	}
 err:
 	return false;
@@ -97,13 +105,17 @@ spt_find_page (struct supplemental_page_table *spt UNUSED, void *va UNUSED) {
 	p.va = pg_round_down(va);
 
 	struct hash_elem *elem;
+	/*
 	elem = hash_find(&(spt->page_table), &(p.hash_elem));
+	*/
+	elem = hash_find(&thread_current()->spt.page_table, &p.hash_elem);
 	if (elem == NULL) {
 		return NULL; 
 	}
 
 	page = hash_entry(elem, struct page, hash_elem);
 	return page;
+	//return hash_entry(elem, struct page, hash_elem);
 }
 
 /* Insert PAGE into spt with validation. */
@@ -136,6 +148,10 @@ vm_get_victim (void) {
 	 // 0인 애들은 최근에 참조가 안 된 애들이다. 그러면 이제 얘네들이 지워져도 되는것임!
 	 // 그럼 일단, frame list를 쭉 돌아본다. 여기서 1인 애들은 0으로 바꿔주고,
 	 // 0인 애들은 victim인 것이다.
+	 if (list_empty(list_begin(&frame_list))) {
+		return;
+	 }
+
 	 for (struct list_elem *frame = list_begin(&frame_list); frame = list_end(&frame_list); frame = list_next(frame)) {
 		victim = list_entry(frame, struct frame, elem);
 		if (pml4_is_accessed(thread_current()->pml4, victim->page->va)) {
@@ -254,21 +270,31 @@ vm_try_handle_fault (struct intr_frame *f, void *addr,
 		page = spt_find_page(spt, pg_round_down(addr));
 		if (page == NULL) {
 			//NOT_REACHED();
+			/*
 			const int STACK_SIZE = 0x100 * PGSIZE;
+			*/
+			const uint64_t STACK_SIZE = 0x100000;
+			const uint64_t STACK_LIMIT = USER_STACK - (1<<20);
 			//interrupt frame의 rsp주소를 받아와서 이게 커널 영역인지 유저 스택 영역인지 체크하고 
 			//유저프로그램에서 fault 발생한 경우에는 그냥 이 rsp를 가지고 쓰고 커널에서 발생한거면 쓰레드에 저장해놓은 유저 스택 rsp정보를 받아와야한다
 			uintptr_t pointer = f->rsp;
 			NOT_REACHED();
 			if (!user) {
+				/*
 				pointer = &thread_current() -> user_stack_rsp;
+				*/
+				pointer = &thread_current() -> if_for_fork.rsp;
 			}
-
+			/*
 			//일단 stack의 1MB 범위내에 addr가 있는지 확인을 하자
 			if (addr <= USER_STACK && pointer - 8 >= USER_STACK - STACK_SIZE && addr == pointer - 8) {
 				//현재 addr가 현재 유저 스택의 가장 아래 위치보다 더 아래 위치를 접근하려고 하면 스택을 더 크게 늘려줘야한다
 				vm_stack_growth(addr);
 			} else if (addr <= USER_STACK && pointer >= USER_STACK - STACK_SIZE && addr >= pointer) {
 				vm_stack_growth(addr);
+			*/
+			if ((uint64_t) addr > STACK_LIMIT && USER_STACK > (uint64_t) addr > (uint64_t)pointer - STACK_SIZE) {
+				vm_stack_growth(pg_round_down(addr));
 			} else {
 				success = false;
 			}
@@ -279,6 +305,9 @@ vm_try_handle_fault (struct intr_frame *f, void *addr,
 			} else {
 				//spt에 이미 들어가있는 페이지이기 때문에 이걸 물리 프레임이랑 매핑해준다
 				//NOT_REACHED();
+				ASSERT(!is_kernel_vaddr(addr));
+				ASSERT(page != NULL);
+				ASSERT(!(write && page->write == false));
 				success = vm_do_claim_page(page);
 			}
 		}
@@ -345,7 +374,10 @@ vm_do_claim_page (struct page *page) {
 void
 supplemental_page_table_init (struct supplemental_page_table *spt UNUSED) {
 	//그냥 해쉬테이블을 init해주면된다
+	/*
 	hash_init(&(spt->page_table), spt_hash, spt_compare, NULL);
+	*/
+	hash_init(&spt->page_table, spt_hash, spt_compare, NULL);
 }
 
 /* Copy supplemental page table from src to dst */
@@ -385,7 +417,12 @@ supplemental_page_table_copy (struct supplemental_page_table *dst UNUSED,
 			memcpy(dst_page->frame->kva, src_page->frame->kva, PGSIZE);
 		} else if (src_page_type == VM_UNINIT) {
 			vm_initializer *src_init = src_page->uninit.init;
+			/*
 			void *src_aux = src_page->uninit.aux;
+			*/
+			void *src_aux = (struct segment_info *)malloc(sizeof(struct segment_info));
+			memcpy(src_aux, src_page->uninit.aux, sizeof(struct segment_info));
+
 			bool alloc_success = vm_alloc_page_with_initializer(src_page_type, src_page->va, src_page->write, src_init, src_aux);
 
 			if (!alloc_success) {
@@ -403,6 +440,7 @@ supplemental_page_table_kill (struct supplemental_page_table *spt UNUSED) {
 	/* TODO: Destroy all the supplemental_page_table hold by thread and
 	 * TODO: writeback all the modified contents to the storage. */
 	//iterate through the spt and destroy(page) for all pages
+	/*
 	struct hash_iterator spt_iterator;
 	hash_first(&spt_iterator, &(spt->page_table));
 	while (hash_next(&spt_iterator)) {
@@ -410,6 +448,12 @@ supplemental_page_table_kill (struct supplemental_page_table *spt UNUSED) {
 		destroy(spt_page);
 		free(spt_page);
 	}
+	*/
+	hash_destroy(&spt->page_table, destroy_page_table);
+}
+
+void destroy_page_table (struct hash_elem *e, void *aux) {
+	vm_dealloc_page(hash_entry(e, struct page, hash_elem));
 }
 
 //spt를 해쉬테이블 구조로 쓰기 때문에 페이지 입력할때 어떻게 넣을지에 대한 해쉬 함수를 적어줘야한다

@@ -147,6 +147,7 @@ struct thread {
 
 	//쓰레드에 이전에 저장해놨던 유저 스택의 rsp 주소를 저장하고 있어야한다
 	uintptr_t user_stack_rsp;
+	//uint64_t rsp;
 #endif
 
 	/* Owned by thread.c. */
