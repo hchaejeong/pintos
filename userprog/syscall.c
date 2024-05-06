@@ -41,6 +41,8 @@ void exit(int status);
 tid_t fork (const char *thread_name, struct intr_frame *f);
 int exec (const char *file);
 int wait(tid_t pid);
+void *mmap(void *addr, size_t length, int writable, int fd, off_t offset);
+void munmap(void *addr);
 
 /* System call.
  *

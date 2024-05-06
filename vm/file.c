@@ -125,22 +125,22 @@ do_mmap (void *addr, size_t length, int writable,
 	/* addr부터 시작해서, page단위로 file의 정보들을 잘라서 저장하면 됨. */
 
 	/* 파일은 어떻게 하던 간에 reopen을 사용해야 한다 (syscall-ummap 함수에 정리해둠) */
-	struct file *file = file_reopen(file);
+	struct file *reopen_file = file_reopen(file);
 
-	if (file == NULL) {
+	if (reopen_file == NULL) {
 		/* 당연히 reopen된 file이 NULL이면 return. */
 		return NULL;
 	}
 	/* 그럼 이제 file이 reopen 되었으니까, 전체 read byte와 zero byte 구해보면, */
 	size_t whole_read_len;
 	size_t whole_zero_len;
-	if (file_length(file) > length) {
+	if (file_length(reopen_file) > length) {
 		/* 실제 file의 길이가 더 길면, length만큼 잘라야 하는 것. 따라서 read byte는 length (이 이상 더 읽으면 안됨) */
 		whole_read_len = length;
 	} else {
 		/* length가 더 길면, 그만큼 좀 넉넉?하게 do_mmap을 실행시킨 것이므로 우리는 그냥
 		file_length만큼만 읽으면 됨. 굳이 더 읽을 필요가 없으니까 */
-		whole_read_len = file_length(file);
+		whole_read_len = file_length(reopen_file);
 	}
 	/* zero len은 page 단위 안에 read byte들이 채워지고, 이제 남은 공간 부분임
 	예를 들어, whole_read_len이 대충 2.5개의 page를 쓴다면 whole_zero_len은 0.5가 되는 것 */
@@ -163,13 +163,13 @@ do_mmap (void *addr, size_t length, int writable,
 
 			/* 정보들을 구조체에 저장 */
 			struct segment_info *info = (struct segment_info*)malloc(sizeof(struct segment_info));
-			info->page_file = file;
+			info->page_file = reopen_file;
 			info->offset = offset;
 			info->read_bytes = page_read_len;
 			info->zero_bytes = 0;
 
 			/* page object 만들자. syscall에서 적은 것처럼 함수 사용 */
-			if (!vm_alloc_page_with_initializer(VM_FILE, page_addr, writable, lazy_load_segment, info)) {
+			if (!vm_alloc_page_with_initializer(VM_FILE, page_addr, writable, lazy_load_segment_for_mmap, info)) {
 				return NULL; // 제대로 page에 file이 안 쓰였으면 NULL 반환
 			}
 
@@ -186,12 +186,12 @@ do_mmap (void *addr, size_t length, int writable,
 
 			/* 정보들을 구조체에 저장 - 이건 똑같음 */
 			struct segment_info *info = (struct segment_info*)malloc(sizeof(struct segment_info));
-			info->page_file = file;
+			info->page_file = reopen_file;
 			info->offset = offset;
 			info->read_bytes = page_read_len;
 			info->zero_bytes = page_zero_len; // 얘만 추가
 
-			if (!vm_alloc_page_with_initializer(VM_FILE, page_addr, writable, lazy_load_segment, info)) {
+			if (!vm_alloc_page_with_initializer(VM_FILE, page_addr, writable, lazy_load_segment_for_mmap, info)) {
 				return NULL;
 			}
 
@@ -205,6 +205,29 @@ do_mmap (void *addr, size_t length, int writable,
 	
 	return return_addr; // file mapping page의 시작 addr 반환!
 
+}
+
+static bool
+lazy_load_segment_for_mmap(struct page *page, void *aux) {
+	/* process.c의 lazy_load_segment가 여기서는 쓸 수 없는 것 같음. 아 so sad
+	그냥 lazy_load_segment 그대로 가져오면 될듯 !! */
+	bool load_done = true;
+	struct segment_info *load_info = (struct segment_info *)aux;
+	struct file *file = load_info->page_file;
+	off_t offset = load_info->offset;
+	size_t page_read_bytes = load_info->read_bytes;
+	size_t page_zero_bytes = load_info->zero_bytes;
+	void *buffer = page->frame->kva;
+	file_seek(file, offset);
+	off_t read_info = file_read(file, buffer, page_read_bytes);
+	if (read_info != (int) page_read_bytes) {
+		palloc_free_page(buffer);
+		load_done = false;
+	} else {
+		memset(buffer + page_read_bytes, 0, page_zero_bytes);
+	}
+
+	return load_done;
 }
 
 /* Do the munmap */
