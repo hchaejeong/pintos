@@ -2,6 +2,7 @@
 #define VM_VM_H
 #include <stdbool.h>
 #include "threads/palloc.h"
+#include <hash.h>
 
 enum vm_type {
 	/* page not initialized */
@@ -46,6 +47,9 @@ struct page {
 	struct frame *frame;   /* Back reference for frame */
 
 	/* Your implementation */
+	//결국 페이지의 정보를 spt가 가지고 있을테니 spt에 이 struct page구조체가 들어가게 되니까 해쉬 정보를 가지고 있어야한다
+	struct hash_elem hash_elem;
+	bool write;
 
 	/* Per-type data are binded into the union.
 	 * Each function automatically detects the current union */
@@ -63,6 +67,7 @@ struct page {
 struct frame {
 	void *kva;
 	struct page *page;
+	struct list_elem elem;
 };
 
 /* The function table for page operations.
@@ -76,6 +81,16 @@ struct page_operations {
 	enum vm_type type;
 };
 
+/*
+//파일 내용을 lazy_load_segment으로 넘겨줄때 필수적으로 넘겨줘야하는 정보들
+struct segment_info {
+	struct file *page_file;
+	off_t offset;
+	size_t read_bytes;
+	size_t zero_bytes;
+};
+*/
+
 #define swap_in(page, v) (page)->operations->swap_in ((page), v)
 #define swap_out(page) (page)->operations->swap_out (page)
 #define destroy(page) \
@@ -85,6 +100,13 @@ struct page_operations {
  * We don't want to force you to obey any specific design for this struct.
  * All designs up to you for this. */
 struct supplemental_page_table {
+	//pml4는 단순히 virtual address를 physical address로 변환해주는 역할만 하지 실제 사용될 페이지에 대한 어떠한 정보도 가지고 있지 않다
+	//SPT가 각각 페이지에 대한 정보를 추가적으로 보충해줘야한다 
+	//page fault가 일어날때 이 페이지에 담겨있는 정보들을 접근해야하기 때문에 필요하고
+	//thread를 종료시킬때 어떤 데이터가 할당 해제가 되어야하는지 알기 위함
+	//pintos가 제공해주는 해쉬 테이블을 사용해보자
+	//해쉬 테이블의 각 entry는 linked list으로 해당 key에 맞는 주소를 가진 원소들의 집합으로 이루어져있다
+	struct hash page_table;
 };
 
 #include "threads/thread.h"
@@ -108,5 +130,11 @@ bool vm_alloc_page_with_initializer (enum vm_type type, void *upage,
 void vm_dealloc_page (struct page *page);
 bool vm_claim_page (void *va);
 enum vm_type page_get_type (struct page *page);
+
+unsigned spt_hash (const struct hash_elem *elem, void *aux UNUSED);
+bool spt_compare (const struct hash_elem *a, const struct hash_elem *b, void *aux UNUSED);
+void spt_destroy (struct hash_elem *elem, void *aux UNUSED);
+
+static bool install_page_in_vm (void *upage, void *kpage, bool writable);
 
 #endif  /* VM_VM_H */

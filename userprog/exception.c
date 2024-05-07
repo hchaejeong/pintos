@@ -127,9 +127,9 @@ page_fault (struct intr_frame *f) {
 	   accessed to cause the fault.  It may point to code or to
 	   data.  It is not necessarily the address of the instruction
 	   that caused the fault (that's f->rip). */
-
+	//printf("(in /exception.c, before fault_addr) f->rsp: 0x%x\n", f->rsp);
 	fault_addr = (void *) rcr2();
-
+	//printf("(in /exception.c, after fault_addr) f->rsp: 0x%x\n", f->rsp);
 	/* Turn interrupts back on (they were only off so that we could
 	   be assured of reading CR2 before it changed). */
 	intr_enable ();
@@ -140,8 +140,14 @@ page_fault (struct intr_frame *f) {
 	write = (f->error_code & PF_W) != 0;
 	user = (f->error_code & PF_U) != 0;
 
+	//printf("not_present: %d\n", not_present);
+	//printf("write: %d\n", write);
+	//printf("user: %d\n", user);
+	//printf("fault_addr: 0x%x\n", fault_addr);
+
 #ifdef VM
 	/* For project 3 and later. */
+	//printf("(in /exception.c) f->rsp: 0x%x\n", f->rsp);
 	if (vm_try_handle_fault (f, fault_addr, user, write, not_present))
 		return;
 #endif

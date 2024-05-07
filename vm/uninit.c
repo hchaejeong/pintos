@@ -10,6 +10,7 @@
 
 #include "vm/vm.h"
 #include "vm/uninit.h"
+#include "userprog/process.h"
 
 static bool uninit_initialize (struct page *page, void *kva);
 static void uninit_destroy (struct page *page);
@@ -49,7 +50,10 @@ uninit_initialize (struct page *page, void *kva) {
 
 	/* Fetch first, page_initialize may overwrite the values */
 	vm_initializer *init = uninit->init;
+	/*
 	void *aux = uninit->aux;
+	*/
+	struct segment_info *aux = (struct segment_info *) uninit->aux;
 
 	/* TODO: You may need to fix this function. */
 	return uninit->page_initializer (page, uninit->type, kva) &&
@@ -65,4 +69,8 @@ uninit_destroy (struct page *page) {
 	struct uninit_page *uninit UNUSED = &page->uninit;
 	/* TODO: Fill this function.
 	 * TODO: If you don't have anything to do, just return. */
+	struct segment_info *aux = (struct segment_info *) uninit->aux;
+	file_close(aux->page_file);
+	free(aux);
+	return;
 }

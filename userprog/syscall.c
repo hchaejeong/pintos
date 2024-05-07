@@ -17,6 +17,9 @@
 #include "threads/synch.h"
 #include "threads/init.h"
 #include "devices/input.h"
+//#ifdef VM
+#include "vm/vm.h"
+//#endif
 
 
 struct lock file_lock;
@@ -26,6 +29,7 @@ void syscall_entry (void);
 void syscall_handler (struct intr_frame *);
 
 void check_address(void *address);
+void check_page(void *address, unsigned size, bool write);
 
 void halt(void);
 bool create (const char * file, unsigned initial_size);
@@ -125,9 +129,11 @@ syscall_handler (struct intr_frame *f UNUSED) {
 			f->R.rax = filesize((int) f->R.rdi);
 			break;
 		case (SYS_READ):
+			//check_page ((void *) f->R.rsi, (unsigned) f->R.rdx, true);
 			f->R.rax = read((int) f->R.rdi, (void *) f->R.rsi, (unsigned) f->R.rdx);
 			break;
 		case (SYS_WRITE):
+			//check_page ((void *) f->R.rsi, (unsigned) f->R.rdx, false);
 			f->R.rax = write((int) f->R.rdi, (void *) f->R.rsi, (unsigned) f->R.rdx);
 			break;
 		case (SYS_SEEK):
@@ -174,6 +180,24 @@ check_address(void *address) {
 	if (pml4_get_page(current->pml4, address) == NULL) {
 		exit(-1);
 	}
+}
+
+void
+check_page (void *address, unsigned size, bool write) {
+	/*
+	check_address(address);
+	while (size >= 0) {
+		check_address(address + size);
+		struct page *check_page = spt_find_page(&thread_current()->spt, address + size);
+		if (check_page == NULL) {
+			exit(-1);
+		} else if (!(check_page->write) && write) {
+			// 즉, page에는 write못하게 되어있는데 여기서는 write하라는 명령이라면 error
+			exit(-1);
+		}
+		size--;
+	}
+	*/
 }
 
 void

@@ -308,6 +308,9 @@ process_exec (void *f_name) {
 	/* We first kill the current context */
 	//현재 프로세스에 할당된 page directory를 지운다
 	process_cleanup ();
+	#ifdef VM
+		supplemental_page_table_init(&thread_current()->spt);
+	#endif
 
 	//command line을 파싱해서 들어오는 argument들을 찾고 어딘가에 보관해놔야한다
 	//pointer 형태로 각 argument를 저장해놓는다
@@ -344,7 +347,12 @@ process_exec (void *f_name) {
 	/* And then load the binary */
 	//_if와 file_name을 현재 프로세스에 로드한다 (성공: 1, 실패: 0)
 	//load 함수의 설명: Stores the executable's entry point into *RIP and its initial stack pointer into *RSP
+	//printf("(before load) _if.rsp: 0x%x\n", _if.rsp);
+	//printf("(before load) &_if.rsp: 0x%x\n", &_if.rsp);
+	//success = load(command_line_args[0], &_if);
 	success = load (program_name, &_if);
+	//printf("(after load) _if.rsp: 0x%x\n", _if.rsp);
+	//printf("(after load) &_if.rsp: 0x%x\n", &_if.rsp);
 
 	// load를 하자마자 success 여부를 판단해야 한다. (exec-missing test에서 뜬 에러)
 	// 그러지 않으면, strlcpy(frame -> rsp, command_line_args[i], strlen(command_line_args[i]) + 1);
@@ -352,7 +360,9 @@ process_exec (void *f_name) {
 	// 위에서 copy하면서 (~while까지) command_line_args[i]의 부분들이 그럼 null이 되니까.
 	if (!success)
 	 {
+		/*
 		palloc_free_page (file_name);
+		*/
 		return -1;
 	 }
 
@@ -383,10 +393,13 @@ process_exec (void *f_name) {
 		
 		//strlen에서 assertion 'string' failed 에러가 난다 -- 즉 words에 뭐가 안 담겨져 들어가는거 아닌가
 		frame -> rsp -= (strlen(command_line_args[i]) + 1);	
+		//printf("(after param) frame->rsp: 0x%x\n", frame->rsp);
+		//printf("(after param) _if.rsp: 0x%x\n", _if.rsp);
 		//스택에 자리를 만들어줘야 푸시가 가능하기때문에 스택 포인터를 밑으로 늘린다
 		//rsp가 가르키는 공간에다가 찾은 단어를 넣어줘야하기 때문에 실제 공간에 접근하고 단어를 단어의 길이만큼 만들어진 스택 공간에 넣어준다
 		//strcpy를 사용해서 src string을 dest에 복사해서 넣어주기 때문에 이걸 사용하자
 		strlcpy(frame -> rsp, command_line_args[i], strlen(command_line_args[i]) + 1);
+		//printf("일단 한번은 되나?\n"); // 한 번도 못 넘어간다.
 
 		//이 단어가 어느 스택주소에 저장되어있는지를 나중에 또 넣어줘야하기때문에 현재 rsp가 가르키는 주소를 저장해줘야한다
 		word_stack_address[i] = frame -> rsp;
@@ -666,6 +679,8 @@ load (const char *file_name, struct intr_frame *if_) {
 	bool success = false;
 	int i;
 
+	//printf("load 시작부분은 들어가?\n");
+
 	/* Allocate and activate page directory. */
 	//현재 쓰레드의 pml4 생성 및 활성화 시킨다 
 	t->pml4 = pml4_create ();
@@ -706,6 +721,8 @@ load (const char *file_name, struct intr_frame *if_) {
 		if (file_read (file, &phdr, sizeof phdr) != sizeof phdr)
 			goto done;
 		file_ofs += sizeof phdr;
+		//printf("phdr.p_type: %d\n", phdr.p_type); // 오케이. 여기까지는 둘 다 1로 동일
+		//printf("PT_LOAD: %d\n", PT_LOAD);
 		switch (phdr.p_type) {	//phdr 하나씩 순회하면서 type이 PT_LOAD이면 로드 가능한 세그먼트라는것을 표시한다
 			case PT_NULL:
 			case PT_NOTE:
@@ -720,6 +737,7 @@ load (const char *file_name, struct intr_frame *if_) {
 				goto done;
 			case PT_LOAD:
 				if (validate_segment (&phdr, file)) {	//phdr 각각은 세그먼트에 대한 정보를 가진다
+					//printf("맞지? if 안까지는 들어가는거지?\n");
 					bool writable = (phdr.p_flags & PF_W) != 0;	
 					uint64_t file_page = phdr.p_offset & ~PGMASK;	//file page 초기화
 					uint64_t mem_page = phdr.p_vaddr & ~PGMASK;		//memory page 초기화 (밑 12 바이트 버린다)
@@ -737,12 +755,19 @@ load (const char *file_name, struct intr_frame *if_) {
 						read_bytes = 0;
 						zero_bytes = ROUND_UP (page_offset + phdr.p_memsz, PGSIZE);
 					}
+					//printf("여기까지는 와?\n");
 					if (!load_segment (file, file_page, (void *) mem_page,
-								read_bytes, zero_bytes, writable))
+								read_bytes, zero_bytes, writable)) {
+						//printf("지금 load_segment가 실행이 안되는거야?\n");
 						goto done;
+					} else {
+						//printf("지금 설마 여기야..? 대체 어디야\n"); // 여기네.여기네...
+					}
 				}
-				else
+				else {
+					//printf("설마 여기로 들어가는 거니?\n");
 					goto done;
+				}
 				break;
 		}
 	}
@@ -844,6 +869,11 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 	ASSERT (pg_ofs (upage) == 0);
 	ASSERT (ofs % PGSIZE == 0);
 
+	//printf("(load_segment) read_bytes: %d\n", read_bytes);
+	//printf("(load_segment) zero_bytes: %d\n", zero_bytes); // 이게 안 나와..!
+	// userprog에서는 잘 들어간다. 그렇다면 load에서 어디선가 이상한 곳으로 빠지는 거다...
+	// 아니다. vm의 load_segment는 저 아래다...
+
 	file_seek (file, ofs);
 	while (read_bytes > 0 || zero_bytes > 0) {
 		/* Do calculate how to fill this page.
@@ -870,6 +900,9 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 			palloc_free_page (kpage);
 			return false;
 		}
+
+		//printf("userprog- upage addr: 0x%x\n", upage);
+		//printf("userprog- kpage addr: 0x%x\n", kpage);
 
 		/* Advance. */
 		read_bytes -= page_read_bytes;
@@ -924,6 +957,35 @@ lazy_load_segment (struct page *page, void *aux) {
 	/* TODO: Load the segment from the file */
 	/* TODO: This called when the first page fault occurs on address VA. */
 	/* TODO: VA is available when calling this function. */
+	//이전과 달리 segment를 physical frame에 직접 할당하는 방식 말고 
+	//spt에 필요한 정보들을 넣어놓고 page fault가 발생했을떄 (즉, 페이지가 요청될때)가 되어야 메모리에 load하는 방식
+	//첫번째 page fault가 발생하면 vm_do_claim_page에서 매핑이 이루어진 이후에 uninit_initialize함수가 호출되고
+	//그 안에서 각각 페이지 타입 별 초기화 함수와 내용을 로드하는 함수 (lazy load segment)가 호출된다
+	//여기서는 내용만 물리 프레임에 로딩하는 작업만 하면된다
+	bool load_done = true;
+	struct segment_info *load_info = (struct segment_info *)aux;
+	//find the file to read the segment from and read segment into memory
+	struct file *file = load_info->page_file;
+	off_t offset = load_info->offset;
+	size_t page_read_bytes = load_info->read_bytes;
+	size_t page_zero_bytes = load_info->zero_bytes;
+	void *buffer = page->frame->kva;
+
+	//printf("(lazy) read_bytes: %d\n", page_read_bytes);
+	//printf("(lazy) zero_bytes: %d\n", page_zero_bytes);
+
+	//파일 위치를 찾아야한다
+	file_seek(file, offset);
+	//offset에 담긴 파일을 물리 프레임으로부터 읽어야하기 때문에 page의 frame에 접근해서 kernel의 주소를 사용해서 읽는다
+	off_t read_info = file_read(file, buffer, page_read_bytes);
+	if (read_info != (int) page_read_bytes) {
+		palloc_free_page(buffer);
+		load_done = false;
+	} else {
+		memset(buffer + page_read_bytes, 0, page_zero_bytes);
+	}
+
+	return load_done;
 }
 
 /* Loads a segment starting at offset OFS in FILE at address
@@ -947,6 +1009,9 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 	ASSERT (pg_ofs (upage) == 0);
 	ASSERT (ofs % PGSIZE == 0);
 
+	//printf("(load_segment) read_bytes: %d\n", read_bytes);
+	//printf("(load_segment) zero_bytes: %d\n", zero_bytes);
+
 	while (read_bytes > 0 || zero_bytes > 0) {
 		/* Do calculate how to fill this page.
 		 * We will read PAGE_READ_BYTES bytes from FILE
@@ -955,15 +1020,24 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 		size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
 		/* TODO: Set up aux to pass information to the lazy_load_segment. */
+		/*
 		void *aux = NULL;
+		*/
+		//넘겨줘야하는 내용은 file, offset, read_bytes, zero_bytes이렇게 넘겨줘야하기 때문에 아예 structure으로 만들어서 넘겨주도록 하자
+		struct segment_info *load_info = (struct segment_info *)malloc(sizeof (struct segment_info));
+		load_info->page_file = file;
+		load_info->offset = ofs;
+		load_info->read_bytes = page_read_bytes;
+		load_info->zero_bytes = page_zero_bytes;
 		if (!vm_alloc_page_with_initializer (VM_ANON, upage,
-					writable, lazy_load_segment, aux))
+					writable, lazy_load_segment, load_info))
 			return false;
 
 		/* Advance. */
 		read_bytes -= page_read_bytes;
 		zero_bytes -= page_zero_bytes;
 		upage += PGSIZE;
+		ofs += page_read_bytes;
 	}
 	return true;
 }
@@ -978,6 +1052,27 @@ setup_stack (struct intr_frame *if_) {
 	 * TODO: If success, set the rsp accordingly.
 	 * TODO: You should mark the page is stack. */
 	/* TODO: Your code goes here */
+	//초기화된 UNINIT한 페이지를 하나 생성
+	bool page_init = vm_alloc_page(VM_ANON | VM_MARKER_0, stack_bottom, true);
+	if (!page_init) {
+		return success;
+	} else {
+		//할당받은 페이지에 바로 물리 프레임을 매핑해준다
+		//스택은 바로 사용하기 때문에 어차피 써야할 페이지에 대해서 물리 프레임을 연결해주는 함수이다
+		if (vm_claim_page(stack_bottom)) {
+			//페이지가 스택이라고 마크해줘야한다
+			//printf("(before marking) if_->rsp: 0x%x\n", if_->rsp);
+			//memset(stack_bottom, 0, PGSIZE);
+			if_->rsp = USER_STACK;
+			//printf("(after marking) if_->rsp: 0x%x\n", if_->rsp);
+			//printf("(before marking) stack_bottom: 0x%x\n", stack_bottom);
+			//printf("pml4 is kernel vaddr?: %d\n", is_kernel_vaddr(&thread_current()->pml4));
+			//memset(stack_bottom, 0, PGSIZE);
+			//printf("(after marking) stack_bottom: 0x%x\n", stack_bottom);
+			//thread_current()->user_stack_rsp = stack_bottom;
+			success = true;
+		}
+	}
 
 	return success;
 }

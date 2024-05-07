@@ -10,4 +10,14 @@ int process_wait (tid_t);
 void process_exit (void);
 void process_activate (struct thread *next);
 
+#ifdef VM
+//파일 내용을 lazy_load_segment으로 넘겨줄때 필수적으로 넘겨줘야하는 정보들
+struct segment_info {
+	struct file *page_file;
+	off_t offset;
+	size_t read_bytes;
+	size_t zero_bytes;
+};
+#endif
+
 #endif /* userprog/process.h */
