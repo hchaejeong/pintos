@@ -164,6 +164,8 @@ check_address(void *address) {
 	// 	exit(-1);
 	// }
 
+	// ASSERT(0);
+	// ASSERT(1 < 0);
 	if (lock_held_by_current_thread(&file_lock)) {
 		lock_release(&file_lock);
 		exit(-1);
