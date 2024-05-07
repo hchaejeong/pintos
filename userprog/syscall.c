@@ -82,7 +82,8 @@ syscall_handler (struct intr_frame *f UNUSED) {
 	// intr_frame 안에는 register 모임?인 R이 있고, R 안에는 깃헙 io링크에 있는 %rax 이런애들이 다 있다!
 	//NOT_REACHED();
 	#ifdef VM
-		thread_current()->user_stack_rsp = f->rsp;
+		struct thread *current = thread_current();
+		current->user_stack_rsp = f->rsp;
 	#endif
 
 	switch (f->R.rax) {
