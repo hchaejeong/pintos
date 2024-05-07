@@ -59,6 +59,7 @@ anon_swap_out (struct page *page) {
 static void
 anon_destroy (struct page *page) {
 	struct anon_page *anon_page = &page->anon;
+	/*
 	//이 페이지가 보유한 리소스를 해제하는거기 때문에 free까지는 할 필요 없다
 	struct segment_info *aux = anon_page->aux;
 	if (aux) {
@@ -71,4 +72,5 @@ anon_destroy (struct page *page) {
 		free(page->frame);
 		page->frame = NULL;
 	}
+	*/
 }

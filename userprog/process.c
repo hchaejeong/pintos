@@ -306,6 +306,13 @@ process_exec (void *f_name) {
 	_if.cs = SEL_UCSEG;
 	_if.eflags = FLAG_IF | FLAG_MBS;
 
+	/* We first kill the current context */
+	//현재 프로세스에 할당된 page directory를 지운다
+	process_cleanup ();
+	#ifdef VM
+		supplemental_page_table_init(&thread_current()->spt);
+	#endif
+
 	//command line을 파싱해서 들어오는 argument들을 찾고 어딘가에 보관해놔야한다
 	//pointer 형태로 각 argument를 저장해놓는다
 	//in C, we use strtok function to split a string into a series of tokens based on a particular delimiter
@@ -955,6 +962,7 @@ lazy_load_segment (struct page *page, void *aux) {
 	//여기서는 내용만 물리 프레임에 로딩하는 작업만 하면된다
 	bool load_done = true;
 	struct segment_info *load_info = (struct segment_info *)aux;
+
 	//find the file to read the segment from and read segment into memory
 	struct file *file = load_info->page_file;
 	off_t offset = load_info->offset;
@@ -1040,24 +1048,30 @@ setup_stack (struct intr_frame *if_) {
 	 * TODO: You should mark the page is stack. */
 	/* TODO: Your code goes here */
 	//초기화된 UNINIT한 페이지를 하나 생성
+	/*
 	bool page_init = vm_alloc_page_with_initializer(VM_ANON | VM_MARKER_STACK, stack_bottom, true, NULL, NULL);
+	*/
+	bool page_init = vm_alloc_page(VM_ANON | VM_MARKER_0, stack_bottom, true);
 	if (!page_init) {
-		struct page *pg = spt_find_page(&thread_current()->spt, stack_bottom);
-		palloc_free_page(pg);
 		return success;
 	} else {
 		//할당받은 페이지에 바로 물리 프레임을 매핑해준다
 		//스택은 바로 사용하기 때문에 어차피 써야할 페이지에 대해서 물리 프레임을 연결해주는 함수이다
+		bool check = vm_claim_page(stack_bottom);
+		//ASSERT(check == true);
+		//ASSERT(check == false);
+		if (check) {
+		/*
 		if (vm_claim_page(stack_bottom)) {
+			*/
+			/* 여기 vm_claim_page(stack_bottom)이 true니까 여기로 들어온 거 아니냐? */
+			//ASSERT(!vm_claim_page(stack_bottom));
+			//ASSERT(!check);
 			//페이지가 스택이라고 마크해줘야한다
 			//memset(stack_bottom, 0, PGSIZE);
 			if_->rsp = USER_STACK;
 			//thread_current()->user_stack_rsp = stack_bottom;
 			success = true;
-		} else {
-			struct page *pg = spt_find_page(&thread_current()->spt, stack_bottom);
-			palloc_free_page(pg);
-			return success;
 		}
 	}
 

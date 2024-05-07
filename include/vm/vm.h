@@ -132,7 +132,9 @@ void vm_dealloc_page (struct page *page);
 bool vm_claim_page (void *va);
 enum vm_type page_get_type (struct page *page);
 
-uint64_t spt_hash (const struct hash_elem *e, void *aux);
-bool spt_compare (const struct hash_elem *a, const struct hash_elem *b, void *aux);
+void destroy_page_table (struct hash_elem *e, void *aux);
+static bool install_page_in_vm (void *upage, void *kpage, bool writable);
 
+unsigned spt_hash (const struct hash_elem *elem, void *aux UNUSED);
+bool spt_compare (const struct hash_elem *a, const struct hash_elem *b, void *aux UNUSED);
 #endif  /* VM_VM_H */
