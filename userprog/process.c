@@ -308,7 +308,9 @@ process_exec (void *f_name) {
 	/* We first kill the current context */
 	//현재 프로세스에 할당된 page directory를 지운다
 	process_cleanup ();
-	supplemental_page_table_init(&thread_current()->spt);
+	#ifdef VM
+		supplemental_page_table_init(&thread_current()->spt);
+	#endif
 
 	//command line을 파싱해서 들어오는 argument들을 찾고 어딘가에 보관해놔야한다
 	//pointer 형태로 각 argument를 저장해놓는다
