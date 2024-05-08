@@ -1027,11 +1027,7 @@ setup_stack (struct intr_frame *if_) {
 	bool page_init = vm_alloc_page_with_initializer(VM_ANON | VM_MARKER_STACK, stack_bottom, true, NULL, NULL);
 	*/
 	bool page_init = vm_alloc_page(VM_ANON | VM_MARKER_0, stack_bottom, true);
-	if (!page_init) {
-		struct page *have_to_free_page = spt_find_page(&thread_current()->spt, stack_bottom);
-		palloc_free_page(have_to_free_page);
-		return success;
-	} else {
+	if (page_init) {
 		//할당받은 페이지에 바로 물리 프레임을 매핑해준다
 		//스택은 바로 사용하기 때문에 어차피 써야할 페이지에 대해서 물리 프레임을 연결해주는 함수이다
 		bool check = vm_claim_page(stack_bottom);
