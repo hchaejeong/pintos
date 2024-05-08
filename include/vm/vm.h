@@ -88,8 +88,8 @@ struct page_operations {
 struct segment_info {
 	struct file *page_file;
 	off_t offset;
-	size_t read_bytes;
-	size_t zero_bytes;
+	uint32_t read_bytes;
+	uint32_t zero_bytes;
 };
 
 #define swap_in(page, v) (page)->operations->swap_in ((page), v)
@@ -135,6 +135,6 @@ enum vm_type page_get_type (struct page *page);
 void destroy_page_table (struct hash_elem *e, void *aux);
 static bool install_page_in_vm (void *upage, void *kpage, bool writable);
 
-unsigned spt_hash (const struct hash_elem *elem, void *aux UNUSED);
+uint64_t spt_hash (const struct hash_elem *elem, void *aux UNUSED);
 bool spt_compare (const struct hash_elem *a, const struct hash_elem *b, void *aux UNUSED);
 #endif  /* VM_VM_H */

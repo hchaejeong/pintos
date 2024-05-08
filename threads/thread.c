@@ -901,7 +901,11 @@ init_thread (struct thread *t, const char *name, int priority) {
 	list_init(&(t->my_child));
 
 	//user stack rsp주소를 저장하기 위해 초기화 시켜놓는다
-	t->user_stack_rsp = 0;
+	/* We first kill the current context */
+	//현재 프로세스에 할당된 page directory를 지운다
+	#ifdef VM
+		t->user_stack_rsp = 0;
+	#endif
 }
 
 /* Chooses and returns the next thread to be scheduled.  Should

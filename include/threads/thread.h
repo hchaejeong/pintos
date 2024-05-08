@@ -118,7 +118,6 @@ struct thread {
 #ifdef USERPROG
 	/* Owned by userprog/process.c. */
 	uint64_t *pml4;                     /* Page map level 4 */
-#endif	
 	//user app을 사용할때 file descriptor table으로 파일에 접근할수있도록 한다 (현재 Unix은 모든것을 파일로 관리하고 있다 - 시스템 콜도)
 	//file descriptor table의 인덱스로 어떤 시스템 콜 또는 파일을 access하도록 한다
 	//각 쓰레드는 이 파일 테이블이 필요하고 프로세스에서 시스템 콜으로 파일을 열때마다 파일 인덱스가 하나씩 +1 된다
@@ -140,7 +139,8 @@ struct thread {
 
 	struct list my_child; // 해당 thread의 child들의 리스트
 	struct list_elem my_child_elem; // list_elem 형태로 저장해야 하니까 새로 정의
-
+#endif	
+	
 #ifdef VM
 	/* Table for whole virtual memory owned by thread. */
 	struct supplemental_page_table spt;

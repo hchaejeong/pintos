@@ -67,10 +67,11 @@ anon_destroy (struct page *page) {
 		free(aux);
 	}
 	//페이지랑 물리 프레임의 할당도 free해줘야한다
+	
+	*/
 	if (page->frame != NULL) {
 		list_remove(&(page->frame->elem));
 		free(page->frame);
 		page->frame = NULL;
 	}
-	*/
 }

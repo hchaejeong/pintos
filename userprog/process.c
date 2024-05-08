@@ -763,10 +763,11 @@ load (const char *file_name, struct intr_frame *if_) {
 	 * TODO: Implement argument passing (see project2/argument_passing.html). */
    
 	//오픈된 파일에는 write가 일어나지 않도록 deny file write을 해줘야한다
-	file_deny_write(file);
-	//deny write으로 막아놓은 다음에 파일을 실행시킬수있도록
-	t -> executing_file = file;
-
+	if (file != NULL) {
+		file_deny_write(file);
+		//deny write으로 막아놓은 다음에 파일을 실행시킬수있도록
+		t -> executing_file = file;
+	}
 	success = true;
 
 done:
