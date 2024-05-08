@@ -54,11 +54,10 @@ process_create_initd (const char *file_name) {
 	strlcpy (fn_copy, file_name, PGSIZE);
 
 	char * parsed;
-	strtok_r(file_name, " ", &parsed);
 
 	/* Create a new thread to execute FILE_NAME. */
 	//command line을 파싱해서 얻은 파일 이름을 넘겨주고 thread을 새로 만든다 
-	tid = thread_create (file_name, PRI_DEFAULT, initd, fn_copy);
+	tid = thread_create (strtok_r(file_name, " ", &parsed), PRI_DEFAULT, initd, fn_copy);
 	if (tid == TID_ERROR)
 		palloc_free_page (fn_copy);
 	return tid;
@@ -345,28 +344,20 @@ process_exec (void *f_name) {
 		command_line_args[parameter_index] = word_tokens;
 	}
 
-	/* We first kill the current context */
-	//현재 프로세스에 할당된 page directory를 지운다
-	process_cleanup ();
-	#ifdef VM
-		supplemental_page_table_init(&thread_current()->spt);
-	#endif
-
 	/* And then load the binary */
-	//printf("Here's a pointer for you: %" PRIxPTR "\n", _if.rsp);
 	//_if와 file_name을 현재 프로세스에 로드한다 (성공: 1, 실패: 0)
 	//load 함수의 설명: Stores the executable's entry point into *RIP and its initial stack pointer into *RSP
 	success = load (program_name, &_if);
-	//printf("next pointer for you: %" PRIxPTR "\n", _if.rsp);
+
 	// load를 하자마자 success 여부를 판단해야 한다. (exec-missing test에서 뜬 에러)
 	// 그러지 않으면, strlcpy(frame -> rsp, command_line_args[i], strlen(command_line_args[i]) + 1);
 	// 부분에서 page fault 에러가 뜬다! program_name이 이상하면 rsp도 이상하니까,
 	// 위에서 copy하면서 (~while까지) command_line_args[i]의 부분들이 그럼 null이 되니까.
 	if (!success)
-	{
+	 {
 		palloc_free_page (file_name);
 		return -1;
-	}
+	 }
 
 	//가장 마지막으로 추가된 parameter부터 푸시가 되어야하니까 현재 command_line_args 포인터가 포인트하고 있는게 마지막으로 추가된 위치 + 1일것이다
 	//char *last_elem_index = command_line_args - 1;
@@ -375,16 +366,12 @@ process_exec (void *f_name) {
 	//유저가 요청한 프로세스를 수행하기 위한 interrupt frame 구조체 내 정보를 유저 커널 스택에 쌓는다
 	//단어 데이터를 저장 해놓기 (order 상관없으니 그냥 첫 단어부터 넣기로 하자)
 	//null pointer sentinel도 있기 때문에 parameter_index부터 시작해서 strlen + 1만큼 loop해야한다
-	//struct intr_frame * frame = &_if;
-	//printf('after load rsp: ', _if.rsp);
-	uintptr_t *rsp = (uintptr_t *)(&(_if.rsp));
-	//printf("next pointer for you: %" PRIxPTR "\n", _if.rsp);
+	struct intr_frame * frame = &_if;
 	//command_line_args의 첫 element의 주소를 가르키게된다
 	char **words = command_line_args;
 	//오른쪽 (가장 마지막 parameter)부터 왼쪽 방향으로 스택에 push address of each string plus a null pointer sentinel (\0)
 	//'bar\0' 이런식으로 저장해줘야한다
 	char *word_stack_address[64];
-	int argument_length = 0;
 
 	for (int i = parameter_index - 1; i >= 0; i--) { 
 		//1. top of the stack에다가 각 단어들을 넣어줘야하고 이때 스택은 밑으로 grow한다 -- 스택 포인터가 커진다?
@@ -396,51 +383,48 @@ process_exec (void *f_name) {
 		//words[i]는 ith argument의 정보를 담고 있는 포인터이다
 		//char** actual_word = words[i];
 		//void *: pointer to any data type
-		//argument_length += strlen(command_line_args[i]) +
+		
 		//strlen에서 assertion 'string' failed 에러가 난다 -- 즉 words에 뭐가 안 담겨져 들어가는거 아닌가
-		*rsp = *rsp - (strlen(command_line_args[i]) + 1);
-		//printf("command line arg: %s", command_line_args[i]);	
-		//printf("after rsp decrement: %" PRIxPTR "\n", *rsp);
+		frame -> rsp -= (strlen(command_line_args[i]) + 1);	
 		//스택에 자리를 만들어줘야 푸시가 가능하기때문에 스택 포인터를 밑으로 늘린다
 		//rsp가 가르키는 공간에다가 찾은 단어를 넣어줘야하기 때문에 실제 공간에 접근하고 단어를 단어의 길이만큼 만들어진 스택 공간에 넣어준다
 		//strcpy를 사용해서 src string을 dest에 복사해서 넣어주기 때문에 이걸 사용하자
-		memcpy(*rsp, command_line_args[i], strlen(command_line_args[i]) + 1);
+		strlcpy(frame -> rsp, command_line_args[i], strlen(command_line_args[i]) + 1);
 
 		//이 단어가 어느 스택주소에 저장되어있는지를 나중에 또 넣어줘야하기때문에 현재 rsp가 가르키는 주소를 저장해줘야한다
-		//NOT_REACHED();
-		word_stack_address[i] = *rsp;
+		word_stack_address[i] = frame -> rsp;
 	}
 	//데이터를 Push 할 때는 %rsp의 값을 8만큼 감소시켜야 한다
 	//round the stack pointer down to a multiple of 8 before the first push
 	//void * current_rsp = _if.rsp;
-	while (*rsp % 8 != 0) {
+	while (frame -> rsp % 8 != 0) {
 		//printf("inside here");
-		*rsp = *rsp - 1;
-		*(uint8_t *)*rsp = 0;	//rsp가 가르키고 있는 공간에 0으로 채워넣는다
+		frame -> rsp = frame->rsp - 1;
+		*(uint8_t *)frame -> rsp = 0;	//rsp가 가르키고 있는 공간에 0으로 채워넣는다
 	}
 
 	//null pointer sentinel 0을 char * 타입으로 스택에 푸시해줘야한다 (null terminating \0)
-	*rsp -= 8;
+	frame -> rsp -= 8;
 	//*current_rsp로 스택 포인터가 가르키고있는 실제 공간/데이터에 char * 인 0을 넣어줘야한다.
 	//0은 int타입으로 인식되기 때문에 NULL을 넣어놓는다 - 따라서 현재 이 위치에는 null pointer를 넣어준다
-	memset((char*)*rsp, 0, sizeof(char **));
+	memset(frame -> rsp, 0, sizeof(char **));
 	//printf("added null pointer");
 
 	//이제 마지막 파라미터부터 시작해서 각 단어들이 지금 저장되어있는 위치를 스택에 추가한다
 	for (int i = parameter_index - 1; i >= 0; i--) {
 		//printf("loop for adding address");
-		*rsp -= 8;
-		memcpy((char*)*rsp, &word_stack_address[i], sizeof(char *));
+		frame -> rsp -= 8;
+		memcpy(frame -> rsp, &word_stack_address[i], sizeof(char *));
 	} 
 
 	//지금 순차적으로 addresss를 스택에 넣어줬기때문에 지금 current_stack_pointer가 결국에 argv[0]의 포인터를 담고 있다
 	//command_line의 첫 단어는 program name을 담고 있고 이를 가르키는 포인터를 %rsi에 저장해놓는다
-	_if.R.rsi = *rsp;
-	_if.R.rdi = parameter_index;
+	frame -> R.rsi = frame -> rsp;
+	frame -> R.rdi = parameter_index;
 
 	//fake return address를 마지막으로 푸시해야하기때문에 그냥 0을 넣는다 -- 타임은 void (*) ()
-	*rsp -= 8;
-	memset(*rsp, 0, sizeof(void *));
+	frame -> rsp -= 8;
+	memset(frame -> rsp, 0, sizeof(void *));
 
 	//hex_dump(_if.rsp , _if.rsp , USER_STACK - (uint64_t)_if.rsp, true);
 
@@ -581,16 +565,9 @@ process_exit (void) {
 static void
 process_cleanup (void) {
 	struct thread *curr = thread_current ();
-	struct file *curr_file = curr->executing_file;
-	if (curr_file) {
-		file_close(curr_file);
-	}
-	curr->executing_file = NULL;
 
 #ifdef VM
-	if(!hash_empty(&curr->spt.page_table)) {
-		supplemental_page_table_kill (&curr->spt);
-	}
+	supplemental_page_table_kill (&curr->spt);
 #endif
 
 	uint64_t *pml4;
@@ -786,18 +763,16 @@ load (const char *file_name, struct intr_frame *if_) {
 	 * TODO: Implement argument passing (see project2/argument_passing.html). */
    
 	//오픈된 파일에는 write가 일어나지 않도록 deny file write을 해줘야한다
-	file_deny_write(file);
-	//deny write으로 막아놓은 다음에 파일을 실행시킬수있도록
-	t -> executing_file = file;
-
+	if (file != NULL) {
+		file_deny_write(file);
+		//deny write으로 막아놓은 다음에 파일을 실행시킬수있도록
+		t -> executing_file = file;
+	}
 	success = true;
 
 done:
 	/* We arrive here whether the load is successful or not. */
 	//file_close (file); // 여기서 말고 exit할 때 닫게 해야함
-	// if (file != thread_current()->executing_file)
-	// 	file_close(file);
-
 	return success;
 }
 
@@ -966,14 +941,14 @@ lazy_load_segment (struct page *page, void *aux) {
 	//find the file to read the segment from and read segment into memory
 	struct file *file = load_info->page_file;
 	off_t offset = load_info->offset;
-	uint32_t page_read_bytes = load_info->read_bytes;
-	uint32_t page_zero_bytes = load_info->zero_bytes;
+	size_t page_read_bytes = load_info->read_bytes;
+	size_t page_zero_bytes = load_info->zero_bytes;
 	void *buffer = page->frame->kva;
 	//파일 위치를 찾아야한다
-	//file_seek(file, offset);
+	file_seek(file, offset);
 	//offset에 담긴 파일을 물리 프레임으로부터 읽어야하기 때문에 page의 frame에 접근해서 kernel의 주소를 사용해서 읽는다
-	uint32_t read_info = (uint32_t)file_read_at(file, buffer, page_read_bytes, offset);
-	if (read_info != page_read_bytes) {
+	off_t read_info = file_read(file, buffer, page_read_bytes);
+	if (read_info != (int) page_read_bytes) {
 		palloc_free_page(buffer);
 		load_done = false;
 	} else {
@@ -1014,13 +989,12 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 		/* TODO: Set up aux to pass information to the lazy_load_segment. */
 		//넘겨줘야하는 내용은 file, offset, read_bytes, zero_bytes이렇게 넘겨줘야하기 때문에 아예 structure으로 만들어서 넘겨주도록 하자
 		struct segment_info *load_info = (struct segment_info *)malloc(sizeof (struct segment_info));
-		load_info->page_file = file_reopen(file);
+		load_info->page_file = file;
 		load_info->offset = ofs;
 		load_info->read_bytes = page_read_bytes;
 		load_info->zero_bytes = page_zero_bytes;
 		//vm_alloc_page 함수를 호출해서 페이지를 생성해주는거다
 		//여기서 5번째 인자인 aux가 페이지에 로드할 내용이고 4번째 인자인 lazy_load_segment가 이 내용물을 넣어주는 함수이다
-		ofs += page_read_bytes;
 		if (!vm_alloc_page_with_initializer (VM_ANON, upage,
 					writable, lazy_load_segment, load_info))
 			//이 과정에서 lazy_load_segment을 호출한뒤 반환값을 vm_alloc의 인자로 넣는다
@@ -1030,6 +1004,7 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 		read_bytes -= page_read_bytes;
 		zero_bytes -= page_zero_bytes;
 		upage += PGSIZE;
+		ofs += PGSIZE;
 	}
 	return true;
 }
@@ -1053,6 +1028,8 @@ setup_stack (struct intr_frame *if_) {
 	*/
 	bool page_init = vm_alloc_page(VM_ANON | VM_MARKER_0, stack_bottom, true);
 	if (!page_init) {
+		struct page *have_to_free_page = spt_find_page(&thread_current()->spt, stack_bottom);
+		palloc_free_page(have_to_free_page);
 		return success;
 	} else {
 		//할당받은 페이지에 바로 물리 프레임을 매핑해준다
@@ -1068,10 +1045,19 @@ setup_stack (struct intr_frame *if_) {
 			//ASSERT(!vm_claim_page(stack_bottom));
 			//ASSERT(!check);
 			//페이지가 스택이라고 마크해줘야한다
-			//memset(stack_bottom, 0, PGSIZE);
 			if_->rsp = USER_STACK;
 			//thread_current()->user_stack_rsp = stack_bottom;
 			success = true;
+			//ASSERT(0);
+			ASSERT(is_user_vaddr(stack_bottom));
+			ASSERT(!is_kernel_vaddr(stack_bottom));
+			//memset(stack_bottom, 0, PGSIZE); // 지금 여기서부터 handler fault가 난다.
+			if_->rsp = USER_STACK;
+		} else {
+			// 만약 claim page가 실패했다면,
+			struct page *have_to_free_page = spt_find_page(&thread_current()->spt, stack_bottom);
+			palloc_free_page(have_to_free_page);
+			return success;
 		}
 	}
 

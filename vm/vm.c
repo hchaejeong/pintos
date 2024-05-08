@@ -103,9 +103,9 @@ spt_find_page (struct supplemental_page_table *spt UNUSED, void *va UNUSED) {
 	struct page *page = (struct page *)malloc(sizeof(struct page));
 	/* TODO: Fill this function. */
 	//spt에서 해당 va를 가지고 있는 페이지를 빼오는거기 때문에 hash search 함수들을 이용하면 될거같다
-	// struct page p;
-	// p.va = pg_round_down(va);
-	page->va = pg_round_down(va);
+	struct page p;
+	p.va = pg_round_down(va);
+	//page->va = pg_round_down(va);
 
 	struct hash_elem *elem;
 	/*
@@ -248,8 +248,15 @@ vm_stack_growth (void *addr) {
 	// 	}
 	// 	found_page = spt_find_page(&thread_current()->spt, adjusted_addr);
 	// }
+	bool alloc_success = vm_alloc_page(VM_ANON | VM_MARKER_STACK, adjusted_addr, true);
+	while (alloc_success) {
+		struct page *pg = spt_find_page(&thread_current()->spt, adjusted_addr);
+        vm_claim_page(adjusted_addr);
+        adjusted_addr += PGSIZE;
+		alloc_success = vm_alloc_page(VM_ANON | VM_MARKER_STACK, adjusted_addr, true);
+	}
 
-	vm_alloc_page(VM_ANON | VM_MARKER_STACK, adjusted_addr, true);
+	//vm_alloc_page(VM_ANON | VM_MARKER_STACK, adjusted_addr, true);
 }
 
 /* Handle the fault on write_protected page */
@@ -287,21 +294,19 @@ vm_try_handle_fault (struct intr_frame *f, void *addr,
 			uintptr_t pointer = f->rsp;
 			//NOT_REACHED();
 			if (!user) {
-				/*
 				pointer = &thread_current() -> user_stack_rsp;
-				*/
-				pointer = &thread_current() -> if_for_fork.rsp;
+				//pointer = &thread_current() -> if_for_fork.rsp;
 			}
-			/*
 			//일단 stack의 1MB 범위내에 addr가 있는지 확인을 하자
 			if (addr <= USER_STACK && addr >= USER_STACK - STACK_SIZE && addr >= pointer - 8) {
 				//현재 addr가 현재 유저 스택의 가장 아래 위치보다 더 아래 위치를 접근하려고 하면 스택을 더 크게 늘려줘야한다
 				vm_stack_growth(addr);
 			} else if (addr <= USER_STACK && pointer >= USER_STACK - STACK_SIZE && addr >= pointer) {
+				//NOT_REACHED();
 				vm_stack_growth(addr);
-			*/
-			if ((uint64_t) addr > STACK_LIMIT && USER_STACK > (uint64_t) addr > (uint64_t)pointer - STACK_SIZE) {
-				vm_stack_growth(pg_round_down(addr));
+			// if (addr > STACK_LIMIT && USER_STACK > (uint64_t) addr > (uint64_t)pointer - STACK_SIZE) {
+			// 	NOT_REACHED();
+			// 	vm_stack_growth(pg_round_down(addr));
 			} else {
 				success = false;
 			}
@@ -406,7 +411,7 @@ supplemental_page_table_copy (struct supplemental_page_table *dst UNUSED,
 	//src의 spt를 iterate해야하는데 이건 지금 hash table 구조체를 가지고 있으니 hash_iterator을 사용해야한다
 	bool success = true;
 	struct hash_iterator spt_iterator;
-	spt_iterator.hash = &(src->page_table);
+	//spt_iterator.hash = &(src->page_table);
 	//각 iteration마다 각 hash_elem랑 연결되어 있는 페이지를 찾아서 이 페이지를 dst의 spt에 넣도록 한다
 	hash_first(&spt_iterator, &(src->page_table));
 	while(hash_next(&spt_iterator)) {
@@ -416,8 +421,13 @@ supplemental_page_table_copy (struct supplemental_page_table *dst UNUSED,
 		if (src_page_type == VM_ANON) {
 			//일단 dst의 spt에 들어갈 pending 페이지를 하나 만들어주고 그 다음에 여기 안에 들어가야하는 정보들을 다 넣는다
 			//이렇게 vm_alloc 사용하면 spt_insert_page를 통해서 이 페이지가 spt에 들어간다
-			bool alloc_success = vm_alloc_page(VM_ANON | VM_MARKER_STACK, src_page->va, src_page->write);
+			bool alloc_success = vm_alloc_page(src_page_type, src_page->va, src_page->write);
 			if (!alloc_success) {
+				return false;
+			}
+			//allocate한 후에 바로 claim을 해서 이 페이지랑 프레임으로 매핑시켜줘야한다
+			bool claim_success = vm_claim_page(src_page->va);
+			if (!claim_success) {
 				return false;
 			}
 			//즉, 이 페이지가 잘 들어갔는지 확인하기 위해서 spt_find_page를 사용해서 NULL인지 아닌지를 확인할 수 있다
@@ -427,36 +437,28 @@ supplemental_page_table_copy (struct supplemental_page_table *dst UNUSED,
 				// break;
 				return false;
 			} 
-			//allocate한 후에 바로 claim을 해서 이 페이지랑 프레임으로 매핑시켜줘야한다
-			bool claim_success = vm_do_claim_page(dst_page);
-			if (!claim_success) {
-				return false;
-			}
 			//매핑된 프레임에다가 내용을 넣어야한다
 			//src page의 프레임 주소에 맞는 커널 구역에 들어가서 여기에서의 하나의 프레임의 내용을 그래도 복사해서 dst의 해당 page에 맞는 프레임의 커널 구역에 내용 넣기
-			memcpy(dst_page->va, src_page->frame->kva, PGSIZE);
+			memcpy(dst_page->frame->kva, src_page->frame->kva, PGSIZE);
 		} else if (src_page_type == VM_UNINIT) {
-			vm_initializer *src_init = src_page->uninit.init;
-			/*
-			void *src_aux = src_page->uninit.aux;
-			*/
-			void *src_aux = (struct segment_info *)malloc(sizeof(struct segment_info));
-			memcpy(src_aux, src_page->uninit.aux, sizeof(struct segment_info));
+			if (src_page->uninit.type == VM_ANON) {
+				vm_initializer *src_init = src_page->uninit.init;
+				/*
+				void *src_aux = src_page->uninit.aux;
+				*/
+				void *src_aux = (struct segment_info *)malloc(sizeof(struct segment_info));
+				memcpy(src_aux, src_page->uninit.aux, sizeof(struct segment_info));
 
-			bool alloc_success = vm_alloc_page_with_initializer(src_page_type, src_page->va, src_page->write, src_init, src_aux);
+				bool alloc_success = vm_alloc_page_with_initializer(VM_ANON, src_page->va, src_page->write, src_init, src_aux);
 
-			if (!alloc_success) {
-				return false;
+				if (!alloc_success) {
+					return false;
+				}
 			}
 			//continue;
 		}
 	}
 	return success;
-}
-
-void spt_page_destroy(struct hash_elem *e, void *aux){
-	struct page *page = hash_entry(e, struct page, hash_elem);
-	vm_dealloc_page(page);
 }
 
 /* Free the resource hold by the supplemental page table */
@@ -465,20 +467,21 @@ supplemental_page_table_kill (struct supplemental_page_table *spt UNUSED) {
 	/* TODO: Destroy all the supplemental_page_table hold by thread and
 	 * TODO: writeback all the modified contents to the storage. */
 	//iterate through the spt and destroy(page) for all pages
-	/*
-	struct hash_iterator spt_iterator;
-	hash_first(&spt_iterator, &(spt->page_table));
-	while (hash_next(&spt_iterator)) {
-		struct page *spt_page = hash_entry(hash_cur(&spt_iterator), struct page, hash_elem);
-		destroy(spt_page);
-		free(spt_page);
-	}
-	*/
-	hash_destroy(&spt->page_table, destroy_page_table);
+	
+	// struct hash_iterator spt_iterator;
+	// hash_first(&spt_iterator, &(spt->page_table));
+	// while (hash_next(&spt_iterator)) {
+	// 	struct page *spt_page = hash_entry(hash_cur(&spt_iterator), struct page, hash_elem);
+	// 	if (spt_page->operations->type == VM_FILE) {
+	// 		do_munmap(spt_page->va);
+	// 	}
+	// }
+	
+	hash_clear(&(spt->page_table), destroy_page_table);
 }
 
 void destroy_page_table (struct hash_elem *e, void *aux) {
-	vm_dealloc_page(hash_entry(e, struct page, hash_elem));
+	destroy(hash_entry(e, struct page, hash_elem));
 }
 
 //spt를 해쉬테이블 구조로 쓰기 때문에 페이지 입력할때 어떻게 넣을지에 대한 해쉬 함수를 적어줘야한다
