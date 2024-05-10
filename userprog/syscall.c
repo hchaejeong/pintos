@@ -145,6 +145,7 @@ syscall_handler (struct intr_frame *f UNUSED) {
 			break;
 		case (SYS_MMAP):
 			f->R.rax = mmap((void *) f->R.rdi, (size_t) f->R.rsi, (int) f->R.rdx, (int) f->R.r10, (off_t) f->R.r8);
+			//printf("f->R.rax: 0x%x\n", f->R.rax); // 다 잘 되는데...
 			break;
 		case (SYS_MUNMAP):
 			munmap((void *) f->R.rdi);
@@ -204,6 +205,11 @@ create (const char * file, unsigned initial_size) {
 	//check_bad_ptr(file);
 	//file descriptor table을 할당해줘야하니까 현재 진행중인 프로세스/쓰레드를 받아와서 진행해야함
 	check_address(file);
+	/*
+	if (!is_user_vaddr(file)) {
+		exit(-1);
+	}
+	*/
 
 	//file이 가르키고 있는 부분에 null sentinel이 있는경우 bad ptr이니까 바로 exit시켜야한다
 	if (file[strlen(file) - 1] == '/') {
@@ -247,6 +253,12 @@ open (const char * file) {
 		return -1;
 	}
 	check_address(file);
+	/*
+	if (!is_user_vaddr(file)) {
+		exit(-1);
+	}
+	*/
+	//printf("혹시 어디서 -1 에러가 나는걸까?\n");
 	
 	//fd0, fd1은 stdin, stdout을 위해 따로 빼둬야한다 -- 0이나 1을 리턴하는 경우는 없어야한다
 	lock_acquire(&file_lock);
@@ -529,6 +541,11 @@ exec (const char *file) {
 		//printf("이거 때문인가\n"); // 이거 때문이네...
 		exit(-1);
 	}
+	/*
+	if (!is_user_vaddr(file)) {
+		exit(-1);
+	}
+	*/
 	// process_create_initd에서 strlcpy 썼던 것처럼 이름을 복사해서, 그 이름으로 exec 시킨다!
 	// 일단 하나 page를 할당받고, 이상하면 exit.
 
@@ -583,11 +600,23 @@ void *mmap(void *addr, size_t length, int writable, int fd, off_t offset) {
 	/* anon page처럼 lazy: page object 만들 때 vm_alloc_page_with_initializer or vm_alloc_page 이용 */
 
 	// 하나하나씩 천천히 해보자.
+
+	/*
+	printf("addr: 0x%x\n", addr);
+	printf("length: %d\n", length);
+	printf("fd: %d\n", fd);
+	printf("offset: 0x%x\n", offset);
+	*/
+	/* mmap-kernel에서, length를 int로 출력하면 음수, -67104768가 나옴. 즉, 너무 커졌다는 것...
+	그렇다면 0보다 작은 것 뿐만 아니라 특정 길이를 넘어서 커널에 가는것도 체크해야함 */
 	
 	if (length <= 0) {
 		/* length == 0 */
 		return NULL;
-	} else if (fd == 0 || fd == 1) {
+	} else if (length >= KERN_BASE) {
+		/* 윗 줄에 이 줄을 추가한 이유를 적어둠 ~~ */
+		return NULL;
+	} if (fd == 0 || fd == 1) {
 		/* I/O인 경우는 fail */
 		return NULL;
 	} else if (addr == NULL) {
@@ -598,6 +627,7 @@ void *mmap(void *addr, size_t length, int writable, int fd, off_t offset) {
 		return NULL;
 	} else if (is_kernel_vaddr(addr)) {
 		/* 당연히 kernel이면 fail */
+		//printf('addr is in kernel');
 		return NULL;
 	} else if (spt_find_page(&thread_current()->spt, addr)) {
 		/* overlap하는 경우는 fail */
@@ -607,20 +637,30 @@ void *mmap(void *addr, size_t length, int writable, int fd, off_t offset) {
 		return NULL;
 	} else {
 		/* 일단은 이제 파일을 열 수 있는 조건이 되었음 */
+		//printf("여기서 에러가 뜸?\n");
 		struct fd_structure* fd_elem = find_by_fd_index(fd);
-		struct file *file = fd_elem->current_file;
-		if (file == NULL) {
-			/* file이 NULL이면 fail */
-			return NULL;
-		} else if (file_length(file) == 0) {
-			/* 파일의 길이 == 0이면 fail */
-			return NULL;
-		} else if (file_length(file) <= offset) {
-			/* offset byte부터 시작하는 file이 offset보다 작으면 당연히 fail이겠지 */
+		//printf("여기서 에러가 뜸?\n");
+		//ASSERT(fd_elem != NULL); // file만 판단하는게 아니라 fd_elem도 판단해야 하는거였어..
+		// mmap-bad-fd 오류 해결!!
+		if (fd_elem == NULL) {
+			/* file을 열어보기 전에 fd_elem부터 확인해줘야 함을 잊지말자!!! */
 			return NULL;
 		} else {
-			/* 이제 최종적으로 do_mmap 할 수 있음! */
-			return do_mmap(addr, length, writable, file, offset);
+			struct file *file = fd_elem->current_file;
+			if (file == NULL) {
+				/* file이 NULL이면 fail */
+				return NULL;
+			} else if (file_length(file) == 0) {
+				/* 파일의 길이 == 0이면 fail */
+				return NULL;
+			} else if (file_length(file) <= offset) {
+				/* offset byte부터 시작하는 file이 offset보다 작으면 당연히 fail이겠지 */
+				return NULL;
+			} else {
+				/* 이제 최종적으로 do_mmap 할 수 있음! */
+				//printf("syscall.c의 do_mmap에는 들어가지?\n"); //okay
+				return do_mmap(addr, length, writable, file, offset);
+			}
 		}
 	}
 }
