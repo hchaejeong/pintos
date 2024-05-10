@@ -5,6 +5,7 @@
 #include "userprog/process.h"
 #include "filesys/file.h"
 #include "threads/mmu.h"
+#include <string.h> // memset을 위해
 
 static bool file_backed_swap_in (struct page *page, void *kva);
 static bool file_backed_swap_out (struct page *page);
@@ -150,14 +151,19 @@ do_mmap (void *addr, size_t length, int writable,
 	void *return_addr = addr;
 	/* 각 page별 addr이 될 변수 만들기 */
 	void *page_addr = addr;
+	//printf("addr: 0x%x\n", addr);
 
 	/* 이제부터는 전체 read 부분들을 읽어나가기 시작 */
 	while (whole_read_len + whole_zero_len > 0) {
 		/* 여기서부터는 page 단위로 끊어서 읽게 됨. 따라서 page 단위의 read/zero byte 구하기 */
 		size_t page_read_len;
 		size_t page_zero_len; // 물론 page zero len은 마지막 page에만 있겠지만!
+
+		//printf("계속 timeout이 뜬다는건, 이 while loop이 안끝난다는 것 같음\n");
+		// 엥 이게 아님. 한 번밖에 안 뜸. 그러면 다른 곳에서 timeout이 뜨는건데...
 		
 		if (whole_read_len > PGSIZE) {
+			//printf("읽는 사이즈가 page보다 커?\n");
 			/* 이제 남은 읽을 부분이 page size보다 크다면, 또 page size만큼만 나눠서 읽으면 됨 */
 			page_read_len = PGSIZE; // 그럼 이제 zero len은 0이 되므로 신경 ㄴㄴ
 
@@ -180,10 +186,13 @@ do_mmap (void *addr, size_t length, int writable,
 			offset = offset + page_read_len; // 시작하는 부분 addr도 증가
 
 		} else {
+			//printf("읽는 사이즈가 page보다 작아?\n"); // 지금 이 부분이다.
 			/* 이제 남은 읽을 부분이 page size보다 작거나 같다면, 이제는 이부분만 읽고 끝~ */
 			page_read_len = whole_read_len;
 			page_zero_len = PGSIZE - page_read_len; // zero len 부분은 page에서 남은 부분
-
+			//printf("page_read_len: %d\n", page_read_len);
+			//printf("page_zero_len: %d\n", page_zero_len); // 값이 맞는지는 모르겠으나 잘 나온다
+			
 			/* 정보들을 구조체에 저장 - 이건 똑같음 */
 			struct segment_info *info = (struct segment_info*)malloc(sizeof(struct segment_info));
 			info->page_file = reopen_file;
@@ -194,15 +203,20 @@ do_mmap (void *addr, size_t length, int writable,
 			if (!vm_alloc_page_with_initializer(VM_FILE, page_addr, writable, lazy_load_segment_for_mmap, info)) {
 				return NULL;
 			}
+			//printf("지금 여기로 안 넘어오는건가? 즉, vm_alloc..이게 이상한가?\n"); // 아닌데.. 넘어가는데...
 
 			/* 각 변수들 업데이트 */
 			whole_read_len = 0; // 다 읽음
 			whole_zero_len = whole_zero_len - page_zero_len; // 혹시라도 zero len이 남아있을 수도 있으니까
 			page_addr = page_addr + PGSIZE;
 			offset = offset + page_read_len;
+			//printf("지금 어디가 안 넘어가는거야?\n");
+			//printf("whole_read_len: %d\n", whole_read_len);
+			//printf("whole_zero_len: %d\n", whole_zero_len);
 		}
 	}
-	
+
+	//printf("그럼 여기까지는 간다는겨? return addr: 0x%x\n", return_addr);
 	return return_addr; // file mapping page의 시작 addr 반환!
 
 }
@@ -211,6 +225,7 @@ static bool
 lazy_load_segment_for_mmap(struct page *page, void *aux) {
 	/* process.c의 lazy_load_segment가 여기서는 쓸 수 없는 것 같음. 아 so sad
 	그냥 lazy_load_segment 그대로 가져오면 될듯 !! */
+	//printf("lazy가 이상한건가..?\n"); // 그럴린 없음.
 	bool load_done = true;
 	struct segment_info *load_info = (struct segment_info *)aux;
 	struct file *file = load_info->page_file;
@@ -248,12 +263,16 @@ do_munmap (void *addr) {
 	/* 그렇다면, addr부터 시작해서 계속 page를 하나하나 넘겨가며 dirty한 경우에는
 	page의 내용들을 다시 file에다가 적어주면 되고, 그게 아니면 그냥 넘어가면 됨
 	swap out하는 것처럼 write 후 page clear 해줘야! */
+
+	//printf("unmmap 해야하는데 못하는건가..?\n");
 	
 	struct page* page = spt_find_page(&thread_current()->spt, addr);
+	//printf("find page가 안되는건가\n");
 
 	while (page != NULL) {
 		/* 즉, page가 NULL이 아닐 때까지만 돌려주면 됨 */
-		
+		//printf("page가 NULL이 아니어야 할텐데...\n"); // 어휴 슈바 여기서 무한루프가 뜬다
+		// addr은 높여주는데, page는 업데이트 없이 그대로 해서 그렇다 난 뷰웅신 ㅋㅋㅋ
 		/* swap out과 같은 방법으로 진행 */
 		struct segment_info *info = (struct segment_info *) page->uninit.aux;
 		if (pml4_is_dirty(thread_current()->pml4, page->va)) {
@@ -262,6 +281,7 @@ do_munmap (void *addr) {
 		}
 		pml4_clear_page(thread_current()->pml4, page->va);
 		addr = addr + PGSIZE;
+		page = spt_find_page(&thread_current()->spt, addr); // 오케이 mmap-read 해결완료 ~~~
 	}
 
 }
