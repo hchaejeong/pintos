@@ -42,6 +42,9 @@ static bool
 file_backed_swap_in (struct page *page, void *kva) {
 	//struct file_page *file_page UNUSED = &page->file;
 	struct file_page *file_page = &page->file;
+	if (file_page == NULL) {
+		return false;
+	}
 
 	/* swap in 하는 것도 aux의 각 속성에 그대로 대입해주기만 하면 됨 */
 	struct segment_info *info = (struct segment_info*)malloc(sizeof(struct segment_info));
@@ -49,8 +52,13 @@ file_backed_swap_in (struct page *page, void *kva) {
 	info->offset = file_page->aux->offset;
 	info->read_bytes = file_page->aux->read_bytes;
 	info->zero_bytes = file_page->aux->zero_bytes;
-
-	//return file lazy load
+	
+	/* 그 뒤, 실제로 file을 page로 load 해오면 됨 */
+	if (lazy_load_segment_for_mmap(page, (void *) info)) {
+		return true;
+	} else {
+		return false;
+	}
 }
 
 /* Swap out the page by writeback contents to the file. */
@@ -58,19 +66,24 @@ static bool
 file_backed_swap_out (struct page *page) {
 	//struct file_page *file_page UNUSED = &page->file;
 	struct file_page *file_page = &page->file;
+	if (file_page == NULL) {
+		return false;
+	}
 
 	/* 이번에는 file이 적혀있는 page를 찾아서, page에 적혀있는 내용들을 file에 다시 적고
 	page를 clear 해주면 됨 */
 	if (pml4_is_dirty(thread_current()->pml4, page->va)) {
-		/* 해당 page가 dirty한 상태 (file 내용이 적혀있는 상태)면 page에 file내용 적어준다 */
+		/* 해당 page가 dirty한 상태 (file 내용이 적혀있는 상태)면 file에 page 내용 적어준다 */
 		file_write_at(file_page->aux->page_file, page->va, file_page->aux->read_bytes ,file_page->aux->offset);
-		pml4_set_dirty(thread_current()->pml4, page->va, 0);
+		pml4_set_dirty(thread_current()->pml4, page->va, 0); // 다 옮겨 적었다고 표시
 	}
 	/* page에 아무것도 안 적혀있으면 당연히 file에 writeback 안 하지! */
 
 	/* 이제 page에 있는 정보들을 file로 writeback한거니까, 이제 page를 비워줘야함 */
 	pml4_clear_page(thread_current()->pml4, page->va); // page 완전히 clear 해주고,
 	page->frame = NULL; // frame은 NULL한 상태로 초기화 해줘야 함
+
+	return true;
 
 }
 

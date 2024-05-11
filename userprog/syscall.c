@@ -388,13 +388,14 @@ read (int fd, void *buffer, unsigned size) {
 int
 write (int fd, const void *buffer, unsigned size) {
 	struct page *start = check_address(buffer);
-	struct page *end = check_address(buffer + size - 1);
+	//struct page *end = check_address(buffer + size - 1);
 	//printf("doing write syscall");
 
 	int write_bytes = 0;
 	// if (size == 0) {
 	// 	return 0;
 	// }
+	//printf("설마 여기가 연관?\n"); // 연관되어있음
 	
 	//fd가 1이면 stdout 시스템 콜이기 떄문에 putbuf()을 이용해서 콘솔에다가 적어줘야한다
 	if (fd == 0) {
@@ -403,12 +404,14 @@ write (int fd, const void *buffer, unsigned size) {
 		//should write all of buffer in one call
 		//대신 버퍼 사이즈가 너무 크면 좀 나눠서 쓰도록 한다
 		//NOT_REACHED();
+		//printf("fd == 1일때야?\n");
 		lock_acquire(&file_lock);
 		putbuf(buffer, size);
 		lock_release(&file_lock);
 		//이 경우에는 콘솔에 우리가 버퍼를 다 쓸 수 있으니 결국 원래 size만큼 쓴다
 		write_bytes = size;
 	} else {
+		//printf("fd가 다른 값일때야\n");
 		//파일 용량을 끝났으면 원래는 파일을 더 늘려서 마저 쓰겠지만 여기서는 그냥 파일의 마지막주소까지 쓰고 여기까지 썼을때의 총 byte개수를 반환시킨다
 		struct fd_structure *fd_elem = find_by_fd_index(fd);
 		if (fd_elem == NULL) {

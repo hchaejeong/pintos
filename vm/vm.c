@@ -149,17 +149,29 @@ spt_remove_page (struct supplemental_page_table *spt, struct page *page) {
 static struct frame *
 vm_get_victim (void) {
 	struct frame *victim = NULL;
+	//printf("여기 들어가냐?\n");
 	 /* TODO: The policy for eviction is up to you. */
 	 // 여기서 policy는 up to u라고 하긴 하는데, 일단 알려준대로 해야겠지?
 	 // 그러면, 1이라고 access bit이 표시 된 애는 최근에 참조된 애고
 	 // 0인 애들은 최근에 참조가 안 된 애들이다. 그러면 이제 얘네들이 지워져도 되는것임!
 	 // 그럼 일단, frame list를 쭉 돌아본다. 여기서 1인 애들은 0으로 바꿔주고,
 	 // 0인 애들은 victim인 것이다.
+	 /*
 	 if (list_empty(list_begin(&frame_list))) {
 		return;
 	 }
+	 */
 
-	 for (struct list_elem *frame = list_begin(&frame_list); frame = list_end(&frame_list); frame = list_next(frame)) {
+	 if (list_empty(&frame_list)) {
+		return;
+	 }
+
+	 //return list_entry(list_begin(&frame_list), struct frame, elem);
+
+	 
+	 struct list_elem *frame;
+
+	 for (frame = list_begin(&frame_list); frame != list_end(&frame_list); frame = list_next(frame)) {
 		victim = list_entry(frame, struct frame, elem);
 		if (pml4_is_accessed(thread_current()->pml4, victim->page->va)) {
 			// recently하게 방문되었으면 true를 반환해줌. 따라서, 이렇게 최근에 반환된 애들은 이제 0으로 세팅해주면 됨
@@ -169,13 +181,17 @@ vm_get_victim (void) {
 		}
 	 }
 	 
-	 if (victim == list_entry(list_end(&frame_list), struct frame, elem)) {
+	 //printf("여기가 문제야?\n");
+	 //if (victim == list_entry(list_end(&frame_list), struct frame, elem)) {
+	 if (frame == list_end(&frame_list)) {
 		// 만약에 이 for문이 끝까지 갔다면, 이 frame list 안에서 victim이 없다는 말임. 다 최근에 access되었다는 뜻이겠지..
 		// 그러면 이제 여기서도 앞 for문에서 0으로 바꿔주었기 때문에, 무조건 첫 번쨰 애가 0이겠지
 		// 그러면 그냥 첫 번째 애를 반환하면 될듯!!
-		victim = list_entry(list_begin(&frame_list), struct frame, elem);
+		//victim = list_entry(list_begin(&frame_list), struct frame, elem);
+		return vm_get_victim(); // 끝까지 갔으면 한 번 더 돌린다
 	 }
 	return victim;
+	
 }
 
 /* Evict one page and return the corresponding frame.
@@ -186,8 +202,14 @@ vm_evict_frame (void) {
 	/* TODO: swap out the victim and return the evicted frame. */
 	// victim frame을 swap out하고, 이렇게 완전 비워진 frame을 return하는 함수임!
 	// 즉, 이미 최근에 access되었으면 통과, 아니면 victim으로 select 되어야 한다.
-	swap_out(victim->page); // vm_get_victim을 통해 victim을 get해야 한다
-	return victim;
+	bool swap_out_well = swap_out(victim->page); // vm_get_victim을 통해 victim을 get해야 한다
+	if (swap_out_well) {
+		//victim->page = NULL; // frame도 reset해주는 과정
+		return victim;
+	} else {
+		return NULL;
+	}
+	//return victim;
 	//return NULL;
 }
 
@@ -197,6 +219,7 @@ vm_evict_frame (void) {
  * space.*/
 static struct frame *
 vm_get_frame (void) {
+	//printf("마지막에 여기가 에러 0?\n");
 	//struct frame *frame = NULL;
 	//struct frame *frame;
 	/* TODO: Fill this function. */
@@ -205,15 +228,20 @@ vm_get_frame (void) {
 	/* 1. user pool로부터 새로운 physical page를 얻는다 (palloc_get_page 이용) */
 	struct frame *frame = (struct frame*)malloc(sizeof(struct frame)); // 먼저 크기 배정
 	//frame = (struct frame*)malloc(sizeof(struct frame)); // 먼저 크기 배정
+	//printf("frame malloc이 안돼?\n");
+	//printf("아니면 PAL_USER이 안돼?\n");
 	frame->kva = palloc_get_page(PAL_USER); // user pool로부터 새로운 page 얻음
+	//printf("아니면 PAL_USER이 안돼?\n");
 	// 여기서, 만약 이미 빈 페이지였다면 그냥 그대로 return하면 되는데,
 	// 이미 frame이 다 차 있어서 빈 페이지가 더이상 남아있지 않다면 victim을 쫓아내고 빈칸으로 만들어야 함
 	// ASSERT (frame != NULL);
 	// ASSERT (frame->page == NULL);
+	//printf("마지막에 여기가 에러 1? frame->kva: 0x%x\n", frame->kva);
 
 	if (frame->kva != NULL) {
 		// 이미 빈 칸이 있어서 그게 배치된 경우
 		// 새로운 frame을 가져왔으니 page를 초기화해주고, frame list에 넣기
+		//printf("마지막에 여기가 에러 2? frame->kva: 0x%x\n", frame->kva);
 		frame->page = NULL;
 		list_push_back(&frame_list, &frame->elem);
 	} else {
@@ -221,8 +249,10 @@ vm_get_frame (void) {
 		// victim을 evict하고, 새로운 frame으로 비운다
 		// 위에 보니 vm_evict_frame()이라는 함수를 사용해야 하는 것 같음
 		// 근데 gitbook에는 일단 panic("todo")를 사용하라고 적혀있는 것 같은데...
+		//printf("마지막에 여기가 에러 3? frame->kva: 0x%x\n", frame->kva);
 		//PANIC("todo");
 		frame = vm_evict_frame();
+		//printf("마지막에 여기가 에러 3? frame->kva: 0x%x\n", frame->kva);
 		frame->page = NULL; // null로 해주는건, 일단 page를 reset (init)해주는 과정임!
 	}
 	ASSERT (frame != NULL);
@@ -270,6 +300,7 @@ vm_try_handle_fault (struct intr_frame *f, void *addr,
 		bool user, bool write, bool not_present) {
 	struct supplemental_page_table *spt = &thread_current ()->spt;
 	struct page *page = NULL;
+	//printf("handle fault addr: 0x%x\n", addr);
 	/* TODO: Validate the fault */
 	/* TODO: Your code goes here */
 	//search the disk, allocate the page frame and load the appropriate page from the disk to the allocated page
@@ -277,16 +308,24 @@ vm_try_handle_fault (struct intr_frame *f, void *addr,
 	//rsp가 유저스택을 가르키고 있으면 이 스택 포인터를 그대로 써도 되는데 커널 스택을 가르키고 있다면 유저->커널로 바뀔때의 thread내의 rsp를 사용해야된다
 	bool success = true;
 	//유저는 자신의 가상공간만 접근할 수 있기 때문에 커널 가상 메모리에 접근하려고 하면 바로 프로세스 종료 시켜야한다
-	if (is_kernel_vaddr(addr) && user || addr == NULL || not_present == false) {
+	//if (is_kernel_vaddr(addr) && user || addr == NULL || not_present == false) {
+	if (is_kernel_vaddr(addr) && user || not_present == false) {
+		//printf("kernel에 가려고 했어?\n");
+		//printf("not present: %d\n", not_present == false);
+		//printf("is_kernel_vaddr(addr) && user: %d\n", is_kernel_vaddr(addr) && user);
+		//printf("addr == NULL: %d\n", addr == NULL);
 		return false;
 	} else {	//not_present인 경우에는 물리 프레임이 할당되지 않아서 발생한 fault이기 때문에 이때 페이지랑 물리 프레임을 연결시켜준다
 		//spt에서 페이지 fault가 일어난 페이지를 찾아야한다
+		//printf("spt_find_page 전이야?\n");
 		page = spt_find_page(spt, addr);
 		if (page == NULL) {	//스택이 가득차서 할당이 더 이상 불가능한 경우
+			//printf("아니면 page가 null인 상태야?\n");
 			//NOT_REACHED();
 			/*
 			const int STACK_SIZE = 0x100 * PGSIZE;
 			*/
+			//printf("spt_find_page 후 page가 null일 떄야?\n"); // 0x0. 여기다.
 			const uint64_t STACK_SIZE = 0x100000;
 			const uint64_t STACK_LIMIT = USER_STACK - (1<<20);
 			//interrupt frame의 rsp주소를 받아와서 이게 커널 영역인지 유저 스택 영역인지 체크하고 
@@ -294,7 +333,9 @@ vm_try_handle_fault (struct intr_frame *f, void *addr,
 			uintptr_t pointer = f->rsp;
 			//NOT_REACHED();
 			if (!user) {
+				//printf("혹시 여기야?\n");
 				pointer = &thread_current() -> user_stack_rsp;
+				//printf("pointer: 0x%x\n", pointer);
 				//pointer = &thread_current() -> if_for_fork.rsp;
 			}
 			//일단 stack의 1MB 범위내에 addr가 있는지 확인을 하자
@@ -308,11 +349,13 @@ vm_try_handle_fault (struct intr_frame *f, void *addr,
 			// 	NOT_REACHED();
 			// 	vm_stack_growth(pg_round_down(addr));
 			} else {
+				//printf("혹시 여기 들어가?\n");
 				success = false;
 			}
 		} else {
 			if (write && page->write == false) {
 				//읽기 전용 페이지에 쓰려고 한 경우는 불가능하다
+				//printf("아니면 읽기 전용?\n");
 				success = false;
 			} else {
 				//spt에 이미 들어가있는 페이지이기 때문에 이걸 물리 프레임이랑 매핑해준다
@@ -321,6 +364,7 @@ vm_try_handle_fault (struct intr_frame *f, void *addr,
 				ASSERT(page != NULL);
 				ASSERT(!(write && page->write == false));
 				success = vm_do_claim_page(page);
+				//printf("분명히 return true를 했을텐데,...\n");
 			}
 		}
 	}
@@ -357,15 +401,20 @@ vm_claim_page (void *va UNUSED) {
 /* Claim the PAGE and set up the mmu. */
 static bool
 vm_do_claim_page (struct page *page) {
+	//printf("어디서 에러가 나는거야 1\n");
+	//printf("(vm_do_claim_page) page addr: 0x%x\n", page);
 	struct frame *frame = vm_get_frame ();
+	//printf("어디에러4\n");
 
 	if (frame == NULL) {
+		//printf("어디서 에러가 나는거야 2\n");
 		return false; // get frame 했는데 NULL이면 당연히 mapping 불가하므로 false 반환
 	}
 
 	/* Set links */
 	frame->page = page;
 	page->frame = frame;
+	//printf("어디에러 6\n");
 
 	/* TODO: Insert page table entry to map page's VA to frame's PA. */
 	// gitbook 설명대로라면, 위에서 vm_get_page로 frame을 갖고 온 다음에,
@@ -374,8 +423,10 @@ vm_do_claim_page (struct page *page) {
 	bool mapping_va_pa = install_page_in_vm(page->va, frame->kva, page->write);
 	//bool mapping_va_pa = pml4_set_page(&thread_current()->pml4, page->va, frame->kva, page->write);
 	if (mapping_va_pa) {
+		//printf("어디서 에러가 나는거야 3\n"); // 여기서 swap 하면서 에러가 일어난다.
 		return swap_in (page, frame->kva);
 	} else {
+		//printf("어디서 에러가 나는거야 4/n");
 		return false;
 	}
 
