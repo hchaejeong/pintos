@@ -46,6 +46,7 @@ file_backed_swap_in (struct page *page, void *kva) {
 		return false;
 	}
 
+	//printf("file swap in은 잘 됨\n");
 	/* swap in 하는 것도 aux의 각 속성에 그대로 대입해주기만 하면 됨 */
 	struct segment_info *info = (struct segment_info*)malloc(sizeof(struct segment_info));
 	info->page_file = file_page->aux->page_file;
@@ -57,6 +58,7 @@ file_backed_swap_in (struct page *page, void *kva) {
 	if (lazy_load_segment_for_mmap(page, (void *) info)) {
 		return true;
 	} else {
+		free(info);
 		return false;
 	}
 }
@@ -70,6 +72,7 @@ file_backed_swap_out (struct page *page) {
 		return false;
 	}
 
+	//printf("file swap out은 잘 됨\n");
 	/* 이번에는 file이 적혀있는 page를 찾아서, page에 적혀있는 내용들을 file에 다시 적고
 	page를 clear 해주면 됨 */
 	if (pml4_is_dirty(thread_current()->pml4, page->va)) {

@@ -71,6 +71,7 @@ vm_alloc_page_with_initializer (enum vm_type type, void *upage, bool writable,
 		struct page *new_page = (struct page*)malloc(sizeof(struct page));
 		//page type에 따라 appropriate initializer을 세팅해줘야한다
 		if (new_page == NULL) {
+			free(new_page);
 			return false;
 		}
 
@@ -113,6 +114,7 @@ spt_find_page (struct supplemental_page_table *spt UNUSED, void *va UNUSED) {
 	*/
 	elem = hash_find(&thread_current()->spt.page_table, &p.hash_elem);
 	if (elem == NULL) {
+		free(page);
 		return NULL; 
 	}
 
@@ -238,6 +240,22 @@ vm_get_frame (void) {
 	// ASSERT (frame->page == NULL);
 	//printf("마지막에 여기가 에러 1? frame->kva: 0x%x\n", frame->kva);
 
+	/*
+	void *user_page = palloc_get_page(PAL_USER);
+	struct frame *frame = NULL;
+	if (user_page == NULL) {
+		frame->kva = NULL;
+		frame = vm_evict_frame();
+		frame->page = NULL;
+	} else {
+		frame->kva = user_page;
+		frame = (struct frame*)malloc(sizeof(struct frame));
+		frame->page = NULL;
+		list_push_back(&frame_list, &frame->elem);
+	}
+	*/
+
+	
 	if (frame->kva != NULL) {
 		// 이미 빈 칸이 있어서 그게 배치된 경우
 		// 새로운 frame을 가져왔으니 page를 초기화해주고, frame list에 넣기
@@ -251,10 +269,12 @@ vm_get_frame (void) {
 		// 근데 gitbook에는 일단 panic("todo")를 사용하라고 적혀있는 것 같은데...
 		//printf("마지막에 여기가 에러 3? frame->kva: 0x%x\n", frame->kva);
 		//PANIC("todo");
+		free(frame);
 		frame = vm_evict_frame();
 		//printf("마지막에 여기가 에러 3? frame->kva: 0x%x\n", frame->kva);
 		frame->page = NULL; // null로 해주는건, 일단 page를 reset (init)해주는 과정임!
 	}
+	
 	ASSERT (frame != NULL);
 	ASSERT (frame->page == NULL); // 이렇게 위에서 page->NULL을 해줘야 이걸 통과하는 거였다. page를 init하는 과정 뒤에 놨어야 했는데 내가 븅신이지...
 
