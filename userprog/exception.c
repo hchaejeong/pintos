@@ -148,6 +148,7 @@ page_fault (struct intr_frame *f) {
 	}
 
 	if (vm_try_handle_fault (f, fault_addr, user, write, not_present))
+		//printf("(page falut) page addr: 0x%x\n", spt_find_page(&thread_current()->spt, fault_addr));
 		return;
 #endif
 	//지금 page fault이 일어나면 계속 패닉으로 kill이 되는데 그러지 말고 그냥 exit(-1)으로 되도록 수정
@@ -159,6 +160,8 @@ page_fault (struct intr_frame *f) {
 	if (user) {
 		exit(-1);
 	}
+	
+	//exit(-1);
 
 	/* If the fault is true fault, show info and exit. */
 	printf ("Page fault at %p: %s error %s page in %s context.\n",
@@ -166,6 +169,7 @@ page_fault (struct intr_frame *f) {
 			not_present ? "not present" : "rights violation",
 			write ? "writing" : "reading",
 			user ? "user" : "kernel");
+	//printf("page 위치: 0x%x\n", spt_find_page(&thread_current()->spt, fault_addr));
 	kill (f);
 }
 
