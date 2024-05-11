@@ -411,7 +411,7 @@ write (int fd, const void *buffer, unsigned size) {
 		//이 경우에는 콘솔에 우리가 버퍼를 다 쓸 수 있으니 결국 원래 size만큼 쓴다
 		write_bytes = size;
 	} else {
-		printf("fd가 다른 값일때야\n");
+		//printf("fd가 다른 값일때야\n");
 		//파일 용량을 끝났으면 원래는 파일을 더 늘려서 마저 쓰겠지만 여기서는 그냥 파일의 마지막주소까지 쓰고 여기까지 썼을때의 총 byte개수를 반환시킨다
 		struct fd_structure *fd_elem = find_by_fd_index(fd);
 		if (fd_elem == NULL) {
