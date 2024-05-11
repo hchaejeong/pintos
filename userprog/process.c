@@ -24,6 +24,7 @@
 #endif
 
 //struct lock *file_lock;
+struct lock load_lock;
 
 static void process_cleanup (void);
 static bool load (const char *file_name, struct intr_frame *if_);
@@ -34,6 +35,7 @@ static void __do_fork (void *);
 static void
 process_init (void) {
 	struct thread *current = thread_current ();
+	lock_init(&load_lock);
 }
 
 /* Starts the first userland program, called "initd", loaded from FILE_NAME.
@@ -679,7 +681,9 @@ load (const char *file_name, struct intr_frame *if_) {
 	process_activate (thread_current ());
 
 	/* Open executable file. */
+	//lock_acquire(&load_lock);
 	file = filesys_open (file_name);
+	//lock_release(&load_lock);
 	if (file == NULL) {
 		printf ("load: %s: open failed\n", file_name);
 		goto done;

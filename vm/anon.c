@@ -15,6 +15,8 @@ static void anon_destroy (struct page *page);
 
 /* swap을 위한 table이 필요함 - bitmap을 이용해야 */
 struct bitmap *swap_list;
+/* page-merge에서 계속 자기 멋대로 yield가 일어남. swap out하는 중에는 막을 수 있도록 */
+struct lock swap_lock;
 
 /* DO NOT MODIFY this struct */
 static const struct page_operations anon_ops = {
@@ -33,6 +35,7 @@ vm_anon_init (void) {
 	/* bitmap을 사용하여 init해주면 됨 */
 	swap_disk = disk_get(1, 1);
 	swap_list = bitmap_create(disk_size(swap_disk) / 8); // 하드드라이브 최소 기억 단위가 8바이트임!
+	lock_init(&swap_lock);
 }
 
 /* Initialize the file mapping */
@@ -84,10 +87,12 @@ anon_swap_out (struct page *page) {
 	
 	//printf("swap out이 문제야?\n");
 
+	lock_acquire(&swap_lock);
 	// swap in과 반대다. page의 내용을 disk에 적어서 백업해두고, page는 삭제하는 용도
 	// 그럼 먼저 disk에 넣을 수 있는 공간을 찾아준다.
 	// false라는 건 swap in 되었어서 이미 page에 다시 적혀서 disk에서는 없어져도 되는 애들임
 	size_t empty_index = bitmap_scan(swap_list, 0, 1, false);
+	lock_release(&swap_lock);
 	if (empty_index == BITMAP_ERROR) {
 		return false; // BITMAP_ERROR라는건 거기 안에 빈공간이 없다는 거다...
 	} else {
@@ -95,11 +100,16 @@ anon_swap_out (struct page *page) {
 		for (int i=0; i<8; i++) {
 			disk_write (swap_disk, empty_index*8+i, page->frame->kva+DISK_SECTOR_SIZE*i);
 		}
+		lock_acquire(&swap_lock);
 		// 그리고 이제 swap out 되었다는 1로 세팅
 		bitmap_set(swap_list, empty_index, true);
+		anon_page->bitmap_index = empty_index;
+		lock_release(&swap_lock);
 		// page의 내용들을 disk로 다 옮겼으므로 이제 page를 reset해줘야함
 		pml4_clear_page(thread_current()->pml4, page->va);
+		/*
 		anon_page->bitmap_index = empty_index;
+		*/
 		//printf("swap out index: %d\n", anon_page->bitmap_index);
 		page->frame = NULL;
 
