@@ -269,15 +269,30 @@ thread_create (const char *name, int priority,
 	/* Add to run queue. */
 	thread_unblock (t);
 
+	/*
+	for (struct list_elem *tmp = list_begin (&ready_list); tmp != list_end (&ready_list); tmp = list_next (tmp)) {
+		struct thread *t = list_entry (tmp, struct thread, elem);
+		printf("(before sort) %d\n", t->tid);
+	}
+	*/
 	// 위에 영어로 된 설명 읽어보니까, ordering은 너가 알아서 해라
 	// & priority scheduling도 너가 알아서 해라 라는 의미 같음.
 	// 그런데 여기서 더 ordering이 필요할까 싶기는 한데
 	// (thread_unblock())에서 list_insert_ordered를 썼으니까 순서대로 갔으리라 믿으나)
 	// 그래도 혹시 모르니까 또 sort 해주는게 좋지않을깡?
 	list_sort(&ready_list, compare_priority_func, NULL);
+	/*
+	for (struct list_elem *tmp2 = list_begin (&ready_list); tmp2 != list_end (&ready_list); tmp2 = list_next (tmp2)) {
+		struct thread *t = list_entry (tmp2, struct thread, elem);
+		printf("(after sort) %d\n", t->tid);
+	}
+	// ready list의 순서는 상관없는 것 같다..
+	// 그냥 open만 문제 안 생기고 잘 되면 되는 것 같다 ㅠㅠ 근데 왜 open이 안될까
+	*/
 	// 그다음에 이제 priority가 높은 애들은 바로 running 되어야 하니까,
 	// 만들어놨던 check ready pri..이 함수 쓰면 되지!
 	if (check_ready_priority_is_high()) {
+		//printf("(thread_create) check_ready_priority 때문에 바뀌나?\n");
 		thread_yield();
 	}
 
@@ -632,6 +647,7 @@ thread_set_priority (int new_priority) {
 		enum intr_level old_level;
 		old_level = intr_disable ();
 		if (check_ready_priority_is_high()) {
+			//printf("(thread_set_priority) check_ready_priority 때문에 바뀌나?\n");
 			thread_yield(); // ready list에 있는 애가 더 크면 thread_yield()하면 됨!
 		}
 		intr_set_level (old_level);

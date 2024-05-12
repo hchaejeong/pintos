@@ -6,6 +6,7 @@
 #include "filesys/file.h"
 #include "threads/mmu.h"
 #include <string.h> // memset을 위해
+#include "threads/synch.h" // lock을 위해
 
 static bool file_backed_swap_in (struct page *page, void *kva);
 static bool file_backed_swap_out (struct page *page);
@@ -19,9 +20,12 @@ static const struct page_operations file_ops = {
 	.type = VM_FILE,
 };
 
+//struct lock mmap_lock;
+
 /* The initializer of file vm */
 void
 vm_file_init (void) {
+	//lock_init(&mmap_lock);
 }
 
 /* Initialize the file backed page */
@@ -103,7 +107,9 @@ file_backed_destroy (struct page *page) {
 
 	/* 이번에는 writeback하는 걸로 끝나는게 아니다. 완전히 page를 destroy해야한다! */
 	if (pml4_is_dirty(thread_current()->pml4, page->va)) {
+		//lock_acquire(&mmap_lock);
 		file_write_at(file_page->aux->page_file, page->va, file_page->aux->read_bytes, file_page->aux->offset);
+		//lock_release(&mmap_lock);
 	} // 여기까지는 같다. writeback까지는 해야하니까!
 
 	/* hash table에서 삭제해줘야 한다. */
@@ -142,10 +148,12 @@ do_mmap (void *addr, size_t length, int writable,
 	/* addr부터 시작해서, page단위로 file의 정보들을 잘라서 저장하면 됨. */
 
 	/* 파일은 어떻게 하던 간에 reopen을 사용해야 한다 (syscall-ummap 함수에 정리해둠) */
+	//lock_acquire(&mmap_lock);
 	struct file *reopen_file = file_reopen(file);
 
 	if (reopen_file == NULL) {
 		/* 당연히 reopen된 file이 NULL이면 return. */
+		//lock_release(&mmap_lock);
 		return NULL;
 	}
 	/* 그럼 이제 file이 reopen 되었으니까, 전체 read byte와 zero byte 구해보면, */
@@ -159,6 +167,7 @@ do_mmap (void *addr, size_t length, int writable,
 		file_length만큼만 읽으면 됨. 굳이 더 읽을 필요가 없으니까 */
 		whole_read_len = file_length(reopen_file);
 	}
+	//lock_release(&mmap_lock);
 	/* zero len은 page 단위 안에 read byte들이 채워지고, 이제 남은 공간 부분임
 	예를 들어, whole_read_len이 대충 2.5개의 page를 쓴다면 whole_zero_len은 0.5가 되는 것 */
 	whole_zero_len = pg_round_up(whole_read_len) - whole_read_len;
@@ -249,7 +258,9 @@ lazy_load_segment_for_mmap(struct page *page, void *aux) {
 	size_t page_read_bytes = load_info->read_bytes;
 	size_t page_zero_bytes = load_info->zero_bytes;
 	void *buffer = page->frame->kva;
+	//lock_acquire(&mmap_lock);
 	file_seek(file, offset);
+	//lock_release(&mmap_lock);
 	off_t read_info = file_read(file, buffer, page_read_bytes);
 	if (read_info != (int) page_read_bytes) {
 		palloc_free_page(buffer);
@@ -292,7 +303,9 @@ do_munmap (void *addr) {
 		/* swap out과 같은 방법으로 진행 */
 		struct segment_info *info = (struct segment_info *) page->uninit.aux;
 		if (pml4_is_dirty(thread_current()->pml4, page->va)) {
+			//lock_acquire(&mmap_lock);
 			file_write_at(info->page_file, addr, info->read_bytes, info->offset);
+			//lock_release(&mmap_lock);
 			pml4_set_dirty(thread_current()->pml4, page->va, 0); // 이미 dirty한 거 다시 file에 writeback했으니 0으로 만들고 이제 초기화 해줘야
 		}
 		pml4_clear_page(thread_current()->pml4, page->va);

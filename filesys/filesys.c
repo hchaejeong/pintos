@@ -7,9 +7,13 @@
 #include "filesys/inode.h"
 #include "filesys/directory.h"
 #include "devices/disk.h"
+#include "threads/synch.h"
 
 /* The disk that contains the file system. */
 struct disk *filesys_disk;
+
+/* filesys_open을 위한 lock */
+struct lock filesys_lock;
 
 static void do_format (void);
 
@@ -22,6 +26,7 @@ filesys_init (bool format) {
 		PANIC ("hd0:1 (hdb) not present, file system initialization failed");
 
 	inode_init ();
+	lock_init(&filesys_lock);
 
 #ifdef EFILESYS
 	fat_init ();
@@ -79,12 +84,14 @@ filesys_create (const char *name, off_t initial_size) {
  * or if an internal memory allocation fails. */
 struct file *
 filesys_open (const char *name) {
+	//lock_acquire(&filesys_lock);
 	struct dir *dir = dir_open_root ();
 	struct inode *inode = NULL;
 
 	if (dir != NULL)
 		dir_lookup (dir, name, &inode);
 	dir_close (dir);
+	//lock_release(&filesys_lock);
 
 	return file_open (inode);
 }

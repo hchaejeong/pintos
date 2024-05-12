@@ -25,6 +25,7 @@
 
 //struct lock *file_lock;
 struct lock load_lock;
+struct lock process_lock;
 
 static void process_cleanup (void);
 static bool load (const char *file_name, struct intr_frame *if_);
@@ -36,6 +37,7 @@ static void
 process_init (void) {
 	struct thread *current = thread_current ();
 	lock_init(&load_lock);
+	lock_init(&process_lock);
 }
 
 /* Starts the first userland program, called "initd", loaded from FILE_NAME.
@@ -85,7 +87,8 @@ tid_t
 process_fork (const char *name, struct intr_frame *if_ UNUSED) {
 	/* Clone current thread to new thread.*/
 	//return thread_create(name, PRI_DEFAULT, __do_fork, thread_current());
-	
+
+	//printf("혹시 fork 때문에 바뀌는 건가?\n");
 	//printf("여기도 안 들어가?\n"); // 안 들어가네...
 	struct thread *parent = thread_current();
 	// do fork에 적어놨듯이, 현재 자신의 if를 미리 저장해놔야 나중에 fork하면서 자식에게 if가 전달됨
@@ -95,6 +98,7 @@ process_fork (const char *name, struct intr_frame *if_ UNUSED) {
 	if (new_thread == TID_ERROR) {
 		return TID_ERROR;
 	}
+	//printf("(fork) parent's chunk %d, child's chunk %d\n", parent->tid-4, new_thread-4);
 
 	struct list *children = &parent->my_child;
 	struct list_elem *child;
@@ -244,7 +248,9 @@ __do_fork (void *aux) {
 	for (struct list_elem *file = list_begin(parent_files); file != list_end(parent_files); file = list_next(file)) {
 		// file이 비어있든 아니든 우리는 list 형태니까 그냥 다 복제해야 한다
 		struct fd_structure *fd = list_entry(file, struct fd_structure, elem);
+		//lock_acquire(&process_lock);
 		struct file *real_file = file_duplicate(fd->current_file);
+		//lock_release(&process_lock);
 		// file이 null이던말던 fd만 null이 아니면, null 그대로 해놓고 다른 요소들 복제하면 됨
 		if (fd == NULL) {
 			goto error;
@@ -259,10 +265,12 @@ __do_fork (void *aux) {
 				// calloc 한게 이상하면 또 error
 				goto error;
 			} else {
+				//lock_acquire(&process_lock);
 				// 정상인 경우
 				new_fd->current_file = real_file;
 				new_fd->fd_index = fd->fd_index;
 				list_push_back(child_files, &(new_fd->elem)); // child list에 넣는다!
+				//lock_release(&process_lock);
 				//list_insert_ordered(child_files, &new_fd->elem, compare_fd_func, NULL);
 			}
 		}
@@ -271,8 +279,11 @@ __do_fork (void *aux) {
 	// curr fd도 똑같이 세팅
 	current->curr_fd = parent->curr_fd;
 	
+	//process_init ();
+	
 	// 자식의 file 복사가 모두 끝났으므로 sema up, 그래서 이제 parent가 이어서 진행할 수 있음
 	sema_up(&current->sema_for_fork);
+	sema_down(&parent->sema_for_fork);
 	process_init ();
 
 	/* Finally, switch to the newly created process. */
@@ -284,6 +295,7 @@ error:
 	// 에러가 나도 일단 sema는 up해야. 안그러면 더이상 안돌아가잖아...
 	current->exit_num = TID_ERROR;
 	sema_up(&current->sema_for_fork);
+	sema_down(&parent->sema_for_fork);
 	thread_exit ();
 }
 
@@ -346,10 +358,12 @@ process_exec (void *f_name) {
 		command_line_args[parameter_index] = word_tokens;
 	}
 
+	//lock_acquire(&process_lock);
 	/* And then load the binary */
 	//_if와 file_name을 현재 프로세스에 로드한다 (성공: 1, 실패: 0)
 	//load 함수의 설명: Stores the executable's entry point into *RIP and its initial stack pointer into *RSP
 	success = load (program_name, &_if);
+	//lock_release(&process_lock);
 
 	// load를 하자마자 success 여부를 판단해야 한다. (exec-missing test에서 뜬 에러)
 	// 그러지 않으면, strlcpy(frame -> rsp, command_line_args[i], strlen(command_line_args[i]) + 1);
@@ -494,6 +508,7 @@ process_wait (tid_t child_tid UNUSED) {
 	if (real_child == NULL) {
 		return -1;
 	}
+	sema_up(&parent->sema_for_fork);
 	sema_down(&real_child->sema_for_wait); // parent가 wait하다가
 	// 그러면 여기서 child가 열심히 돌아가다가 이제 exit 될거고,
 	// exit 되면 sema up을 하면서 자신의 exit_num이 나올 것!
@@ -529,14 +544,17 @@ process_exit (void) {
 	//printf("file이 뭘까: %d\n", curr->executing_file);
 	if (curr->executing_file != NULL) {
 		//printf("어디야1\n");
+		//lock_acquire(&process_lock);
 		file_allow_write(curr->executing_file); // 쓸 수 있게 해준 뒤
 		file_close(curr->executing_file); // 삭제해야함!
 		curr->executing_file = NULL;
 		palloc_free_page(curr->executing_file);
+		//lock_release(&process_lock);
 	}
 	//file_close(curr->executing_file);
 
 	// 현 thread에 있는 모든 파일들을 닫아줘야 함
+	//lock_acquire(&process_lock);
 	struct list *file_list = &curr->file_descriptor_table;
 	while (!list_empty(file_list)) {
 		//printf("어디야2\n");
@@ -545,6 +563,7 @@ process_exit (void) {
 		//palloc_free_page(file);
 		free(file);
 	}
+	//lock_release(&process_lock);
 
 	// child list에 있는 애들도 모두 없애줘야 함. 고아가 될 수는 없잖아!
 	struct list_elem *dont_be_orphan = list_begin(&curr->my_child);
@@ -682,8 +701,13 @@ load (const char *file_name, struct intr_frame *if_) {
 
 	/* Open executable file. */
 	//lock_acquire(&load_lock);
+	//printf("(bf open) current thread: chunk %d\n", thread_current()->tid-4);
+	//printf("(bf open) lock holder: chunk %d\n", load_lock.holder->tid-4);
 	file = filesys_open (file_name);
+	//printf("(af open) current thread: chunk %d\n", thread_current()->tid-4);
+	//printf("(af open) lock holder: chunk %d\n", load_lock.holder->tid-4);
 	//lock_release(&load_lock);
+
 	if (file == NULL) {
 		printf ("load: %s: open failed\n", file_name);
 		goto done;
@@ -691,6 +715,7 @@ load (const char *file_name, struct intr_frame *if_) {
 
 	/* Read and verify executable header. */
 	//오픈한 파일을 읽는다 - elf 헤더의 크기만큼 ehdr에 읽고 정상적인지 확인
+	//lock_acquire(&load_lock);
 	if (file_read (file, &ehdr, sizeof ehdr) != sizeof ehdr
 			|| memcmp (ehdr.e_ident, "\177ELF\2\1\1", 7)
 			|| ehdr.e_type != 2
@@ -699,8 +724,10 @@ load (const char *file_name, struct intr_frame *if_) {
 			|| ehdr.e_phentsize != sizeof (struct Phdr)
 			|| ehdr.e_phnum > 1024) {
 		printf ("load: %s: error loading executable\n", file_name);
+		//lock_release(&load_lock);
 		goto done;
 	}
+	//lock_release(&load_lock);
 
 	/* Read program headers. */
 	//
@@ -708,12 +735,23 @@ load (const char *file_name, struct intr_frame *if_) {
 	for (i = 0; i < ehdr.e_phnum; i++) {
 		struct Phdr phdr;
 
-		if (file_ofs < 0 || file_ofs > file_length (file))
+		//lock_acquire(&load_lock);
+		if (file_ofs < 0 || file_ofs > file_length (file)) {
+			//lock_release(&load_lock);
 			goto done;
-		file_seek (file, file_ofs);
+		}
+		//lock_release(&load_lock);
 
-		if (file_read (file, &phdr, sizeof phdr) != sizeof phdr)
+		//lock_acquire(&load_lock);
+		file_seek (file, file_ofs);
+		//lock_release(&load_lock);
+
+		//lock_acquire(&load_lock);
+		if (file_read (file, &phdr, sizeof phdr) != sizeof phdr) {
+			//lock_release(&load_lock);
 			goto done;
+		}
+		//lock_release(&load_lock);
 		file_ofs += sizeof phdr;
 		switch (phdr.p_type) {	//phdr 하나씩 순회하면서 type이 PT_LOAD이면 로드 가능한 세그먼트라는것을 표시한다
 			case PT_NULL:
@@ -768,7 +806,9 @@ load (const char *file_name, struct intr_frame *if_) {
    
 	//오픈된 파일에는 write가 일어나지 않도록 deny file write을 해줘야한다
 	if (file != NULL) {
+		//lock_acquire(&load_lock);
 		file_deny_write(file);
+		//lock_release(&load_lock);
 		//deny write으로 막아놓은 다음에 파일을 실행시킬수있도록
 		t -> executing_file = file;
 	}
@@ -948,10 +988,15 @@ lazy_load_segment (struct page *page, void *aux) {
 	size_t page_read_bytes = load_info->read_bytes;
 	size_t page_zero_bytes = load_info->zero_bytes;
 	void *buffer = page->frame->kva;
+
+	//lock_acquire(&load_lock);
 	//파일 위치를 찾아야한다
 	file_seek(file, offset);
+	//lock_release(&load_lock);
+	//lock_acquire(&load_lock);
 	//offset에 담긴 파일을 물리 프레임으로부터 읽어야하기 때문에 page의 frame에 접근해서 kernel의 주소를 사용해서 읽는다
 	off_t read_info = file_read(file, buffer, page_read_bytes);
+	//lock_release(&load_lock);
 	if (read_info != (int) page_read_bytes) {
 		palloc_free_page(buffer);
 		load_done = false;

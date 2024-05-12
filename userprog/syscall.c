@@ -210,9 +210,10 @@ create (const char * file, unsigned initial_size) {
 		exit(-1);
 	}
 	*/
-
+	//lock_acquire(&file_lock);
 	//file이 가르키고 있는 부분에 null sentinel이 있는경우 bad ptr이니까 바로 exit시켜야한다
 	if (file[strlen(file) - 1] == '/') {
+		//lock_release(&file_lock);
 		return false;
 	}
 
@@ -226,6 +227,7 @@ create (const char * file, unsigned initial_size) {
 	//이 filesys_create 함수가 파일이 성공적으로 생성될때만 true한 값을 내뱉기때문에 사실상 이게 결국에 이 시스템콜에서 리턴해야할 값이다
 	bool status = filesys_create(file, initial_size);
 	//lock_release로 다시 다른 프로세스도 사용가능하도록 풀어준다
+	//lock_release(&file_lock);
 	lock_release(&file_lock);
 
 	return status;
@@ -268,6 +270,7 @@ open (const char * file) {
 	if (!actual_file) {		//파일을 열지 못한 경우
 		//free (fd_elem);		//할당한 공간을 사용하지 않았기 때문에 다시 free해줘서 다른 애들이 쓸 수 있게 해준다.
 		//lock_release(&file_lock);
+		//lock_release(&file_lock);
 		return -1;
 	}
 
@@ -303,6 +306,7 @@ open (const char * file) {
 		list_push_back(curr_fdt, &(fd_elem->elem));
 	} else {
 		//lock_release(&file_lock);
+		//lock_release(&file_lock);
 		return -1;		//새로운 파일 열 공간이 부족한 경우 open되지 않기 때문에 -1을 리턴한다.
 	}
 	
@@ -322,6 +326,7 @@ open (const char * file) {
 	// }
 	
 	//lock release한 다음에 결과를 반환해줘야한다
+	//lock_release(&file_lock);
 	return fd + 1;
 }
 
@@ -329,6 +334,8 @@ open (const char * file) {
 //fd에 있는 파일의 사이즈를 반환
 int
 filesize (int fd) {
+
+	//lock_acquire(&file_lock);
 	int size = 0;
   
 	//저 file_length함수를 쓰기 위해서는 struct file *형태인 주어진 fd에 있는 파일을 가져와서 이거에 저 함수를 돌려야된다
@@ -336,6 +343,7 @@ filesize (int fd) {
 	struct fd_structure *fd_elem = find_by_fd_index(fd);
 	if (fd_elem == NULL) {
 		//찾지 못한거기때문에 -1을 반환시킨다
+		//lock_release(&file_lock);
 		size = -1;
 	} else {
 		lock_acquire(&file_lock);
@@ -343,6 +351,7 @@ filesize (int fd) {
 		lock_release(&file_lock);
 	}
 
+	//lock_release(&file_lock);
 	return size;
 }
 
@@ -353,7 +362,10 @@ read (int fd, void *buffer, unsigned size) {
 	struct page *start = check_address(buffer);
 	struct page *end = check_address(buffer + size - 1);
 
+	//lock_acquire(&file_lock);
+
 	if (start->write == false || end->write == false) {
+		//lock_release(&file_lock);
 		exit(-1);
 	}
 
@@ -373,6 +385,7 @@ read (int fd, void *buffer, unsigned size) {
 		//지금 fd에 맞는 파일을 뽑아오고 이 파일을 읽어줘야한다
 		struct file *curr_file = fd_elem->current_file;
 		if (curr_file == NULL) {
+			//lock_release(&file_lock);
 			return -1;
 		}
 		lock_acquire(&file_lock);
@@ -380,6 +393,8 @@ read (int fd, void *buffer, unsigned size) {
 		read_bytes = file_read(curr_file, buffer, size);
 		lock_release(&file_lock);
 	}
+	//lock_release(&file_lock);
+
 	return read_bytes;
 }
 
@@ -391,6 +406,7 @@ write (int fd, const void *buffer, unsigned size) {
 	//struct page *end = check_address(buffer + size - 1);
 	//printf("doing write syscall");
 
+	//lock_acquire(&file_lock);
 	int write_bytes = 0;
 	// if (size == 0) {
 	// 	return 0;
@@ -399,6 +415,7 @@ write (int fd, const void *buffer, unsigned size) {
 	
 	//fd가 1이면 stdout 시스템 콜이기 떄문에 putbuf()을 이용해서 콘솔에다가 적어줘야한다
 	if (fd == 0) {
+		//lock_release(&file_lock);
 		return -1;
 	} else if (fd == 1) {
 		//should write all of buffer in one call
@@ -423,6 +440,7 @@ write (int fd, const void *buffer, unsigned size) {
 			lock_release(&file_lock);
 		}
 	}
+	//lock_release(&file_lock);
 
 	return write_bytes;
 }
@@ -430,6 +448,7 @@ write (int fd, const void *buffer, unsigned size) {
 //fd의 파일이 다음으로 읽거나 쓸 next byte을 position으로 바꿔주는 void 함수
 void
 seek (int fd, unsigned position) {
+	//lock_acquire(&file_lock);
 	struct fd_structure *fd_elem = find_by_fd_index(fd);
 	if (fd_elem == NULL) {
 		return;
@@ -437,6 +456,7 @@ seek (int fd, unsigned position) {
 		lock_acquire(&file_lock);
 		struct file *curr_file = fd_elem->current_file;
 		file_seek(curr_file, position);
+		//lock_release(&file_lock);
 	}
 
 	lock_release(&file_lock);
@@ -447,6 +467,7 @@ seek (int fd, unsigned position) {
 //파일의 beginning을 기준으로 byte로 알려준다
 unsigned
 tell (int fd) {	
+	//lock_acquire(&file_lock);
 	unsigned result = -1;
 
 	struct fd_structure *fd_elem = find_by_fd_index(fd);
@@ -460,6 +481,7 @@ tell (int fd) {
 		lock_release(&file_lock);
 	}	
 
+	//lock_release(&file_lock);
 	return result;
 }
 
@@ -467,8 +489,10 @@ tell (int fd) {
 //void file_close(struct file *file)을 사용하려면 fd에 맞는 file을 찾아내고 그걸 넘겨줘야한다
 void
 close (int fd) {
+	//lock_acquire(&file_lock);
 	struct fd_structure *fd_elem = find_by_fd_index(fd);
 	if (fd_elem == NULL) {
+		//lock_release(&file_lock);
 		return;
 	} else {
 		lock_acquire(&file_lock);
@@ -482,6 +506,7 @@ close (int fd) {
 		//palloc_free_page(fd_elem);
 		free(fd_elem);
 	}
+	//lock_release(&file_lock);
 }
 
 //주어진 fd를 가지고 있는 파일을 찾을때 필요하므로 fd_structure을 전체 반환해서 list_elem도 쓸 수 있게
