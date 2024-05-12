@@ -271,6 +271,97 @@ __do_fork (void *aux) {
 	
 	// 자식의 file 복사가 모두 끝났으므로 sema up, 그래서 이제 parent가 이어서 진행할 수 있음
 	sema_up(&current->sema_for_fork);
+
+	/* parent의 fork에 대한 sema를 추가한 이유: At Project 3
+	아무리 해도 page-merge-par, stk, mm이 간헐적으로만 pass가 뜨고, 대부분 fail이 뜨는 것이었다.
+	몇날며칠 밤을 새며 이유를 찾기 위해 노력했지만 계속 프린트를 하는데 진짜 이유를 모르겠는거임
+	뜨는 오류는, the child is exit abnormally (like, exit(-1))에 대한 오류였다.
+		load: child-qsort: open failed 가 뜨는 것이었다.
+		(child-qsort) open "buf3": FAILED 라는 오류도 떴다.
+	조금씩 디버깅 해보니, filesys_open할 때 inode가 NULL하다는 문제였다.
+	근데 진짜 당최 왜 이런 오류가 뜨는건지를 모르겠는거다. 왜 어느때는 file이 있고 어느때는 file이 없냐..
+	그냥 어렴풋하게 생각이 들었던 건 중간에 thread가 만들어질 때 file이 다 복사되기 전에
+	또 다른 thread가 yield를 통해 running되어서 서로 간섭해서 오류가 생기나..라는 것이었다.
+	게속 뭘 출력해보고 뭘 출력해보고 하다가 안되겠어서 피아자에 질문글을 올렸다.
+	어느 한 분이 답글을 남겼다. "플젝3에서는 thread들이 모두 같은 priority를 가져요~"
+	그렇다길래 내가 한 번 #ifdef VM 을 이용해서 플젝3에서는 tid 순서대로 ready list에 들어가게 했다.
+	그러면 page-merge에서 뭔가 지들끼리 간섭 없이 잘 될 줄 알았다.
+	하지만 당연하게도 장렬히 실패. page-merge 테케는 똑같은 문제가 나타났고,
+	오히려 alarm부분의 테케들이 다 실패했다. 당연한거였지 하...
+	이렇게까지 시도한 내 잔해들은 proj3_hany 브랜치에 고스란히 담겨있다.
+	지금 거기서 make check 돌리면 거의 다 fail뜬다. 옛 commit으로 revert하면 ㄱㅊ을거임..
+
+	그래서 일단 먼저 swap을 해결하고 난 다음에, 다시 이 피아자 질문글에 들어가보니까
+	다른 분이 또 답글을 남겼더라. load 함수 안의 filesys_open() 전후에 lock 걸었다가 풀어보라고.
+	그래서 해봤다. 그래도 오류는 똑같이 나고 추가적으로 page-parallel, swap-fork, syn-read&write가 fail하더라.
+	모두 assertion lock_held_by_current_thread(lock)이 fail해서 PANIC이 온 것이었다.
+	난 그냥 이때까지만 해도 page-merge는 똑같은 문제만 나오고 나머지가 더 fail이 나오니
+	저렇게 lock 거는건 아예 상관이 없는거라고 생각했다. 그래서 또 의미없이 printf 디버깅만 하다가..
+	저렇게 load 함수의 filesys_open에 lock이 걸려있는 상태로 몇번 더 page-merge 테케를 돌려보았다.
+	아니 그랬더니 여기서도 assertion lock_held_by_current_thread(lock)이 fail하는 문제가 나왔다!
+	한 7번정도 돌리면 1번은 성공, 5번은 위의 원래 오류들, 그리고 다른 1번이 이 lock assertion이 뜨는 것이었다.
+	아니 진짜 어이없었던 건, 정말 filesys_open 직전에 lock_acquire을 적고, 직후에 lock_release를 적었는데
+	이 사이에 왜 이 assertion이 fail이 뜨는것인가? 아무리 생각해도 말이 안되는 것이었다.
+	진짜 그렇다면 filesys_open하는 동안에 lock을 걸어놨음에도 불구하고 thread current가 바뀌거나
+	lock holder이 바뀌어서 저 오류가 발생하는 것 아니겠는가. 아니 저 짧은 시간에?
+	그래서 바로 프린트 해봤다. 아 나는 tid를 이용해서 몇 번째 chunk인지 알아냈다. tid-4가 chunk num이더라.
+	즉, printf("chunk %d\n", thread->tid-4) 이렇게 출력했다는 말.
+	그래서 lock_acquire과 filesys_open 사이에(bf open) thread_current와 lock->holder을 출력하고,
+	filesys_open과 lock_release 사이에(af open) thread_current와 lock->holder을 출력해봤다.
+	정말 간헐적으로 그 lock assert가 떴고, 이때 확인해보니
+	-----원래라면----
+	(bf open) current thread: chunk 3
+	(bf open) lock holder: chunk 3
+	(af open) current thread: chunk 3
+	(af open) lock holder: chunk 3
+	----------------
+	-----하지만 lock assertion 오류 시에는-----
+	(bf open) current thread: chunk 2
+	(bf open) lock holder: chunk 2
+	(bf open) current thread: chunk 3
+	(bf open) lock holder: chunk 3
+	(af open) current thread: chunk 2
+	(af open) lock holder: chunk 3
+	------------------------------------------
+	이렇게 뜨는 것이었다. 즉, 오류 시에는 lock_acquire을 하고 갑자기 한 번 더 또 lock_acquire을 한 것이었다.
+	이게 말이 되는가!!! 나는 lock을 걸어놨는데!!!!
+	그래서 이렇게 지혼자 툭 튀어나오는 경우는 fork밖에 없다고 생각했다. 그래서 출력해봤더니,
+	------------------------------------------
+	(page-merge-stk) sort chunk 1
+	(bf open) current thread: chunk 0
+	(bf open) lock holder: chunk 0
+	혹시 fork 때문에 바뀌는 건가?
+	(fork) parent's chunk -1, child's chunk 1
+	(bf open) current thread: chunk 1
+	(bf open) lock holder: chunk 1
+	(af open) current thread: chunk 0
+	(af open) lock holder: chunk 1
+	------------------------------------------
+	이런 식으로 뜨는 것이었다. fork시에 parent는 chunk -1이라고 나와있지만 얘는 (page-merge-stk)인,
+	즉 chunk라는 자식을 계속 만들어내는 parent인 것이다. 몇번씩 더 돌려보니까,
+	저 fork의 parent는 안 변하고(당연) 계속 chunk 자식들을 만들어내는데, 그 시기가 아주 들쭉날쭉하시다.
+	내가 chunk 0~ 과 같은 애들을 lock으로 막아놔봤자 뭐해, parent는 lock으로 구애 안 받고 열심히 child나 fork하고 다니시는데!!!
+	이걸 그제서야 깨달은 것이다. 하... fork가 들쭉날쭉한 타이밍에 되는 걸 보고,
+	내가 지금까지 fork를 제어를 안했었던가 되돌아보게 되었다. 그래서 process_fork를 확인해보니,
+	내가 fork_sema를 걸어준 대상은 child 뿐이었다. 이 미친뇬.
+	근데 플젝2를 포함해서 지금까지 테케들이 통과된 것도 신기하다. ㅋㅋ
+	결국에는 fork하는 동안에는 parent도 다른 허튼 짓 못하도록 sema를 이용해서
+	그 행위를 막아줘야 했던 것이었다...
+	즉, fork를 해서 child를 만들어냈으면, 그때부터 ~ child가 행동을 다 끝내기 전까지
+	parent가 fork를 더 하는 그런 허튼 행위를 못하도록 해야하는 것이었다.
+	결국엔 이 문제 떄문에, parent가 child를 만들어내놓고 그 child가 뭐 file 복사하고
+	뭐하고 다하고 종료되는 동안을 기다려주지 못하고 또 child를 만들어내버리니
+	child끼리 서로 간섭하면서 지들끼리 file없고 lock 가로채고 그런 것이었다...
+	그래서 fork가 끝나고, parent의 sema_fork를 down 시켜준 뒤 child가 다 끝날 때까지
+	wait하고, child가 다 끝나면 parent의 sema_fork를 up 시켜줘서 또 다른 child를 fork할 수 있게 했다
+	와 그랬더니 그냥 마법처럼 page-merge-par, stk, mm이 해결되는 것이었다. 진짜 눈물날 뻔 했다.
+	여기까지의 모든 시도들은 solve_merge branch에서 확인 가능하다.
+	fork가 문제라는 걸 알기 전에 syscall.c의 모든 file관련 함수들 lock 다시 재배치도 해보고,
+	다른것들도 막 건드려보고, process.c에 있는 load를 제외한 다른 함수들 중에 file관련 함수들 쓰는
+	애들도 다 lock 걸어주고, load 안에서도 file함수 주변은 다 lock 걸어주고... 뭐 여기도 총체적 난국이다.
+	그래도 여기는 테케 다 통과됨 우하하~
+	지금까지 page-merge-par, stk, mm을 해결하기 위해 밤도 계속 새웠던 어느 os 응애의 이야기였습니다. */
+	sema_down(&parent->sema_for_fork); // 결국 이 parent->sema_for_fork가 살린 것이다.
 	process_init ();
 
 	/* Finally, switch to the newly created process. */
@@ -282,6 +373,7 @@ error:
 	// 에러가 나도 일단 sema는 up해야. 안그러면 더이상 안돌아가잖아...
 	current->exit_num = TID_ERROR;
 	sema_up(&current->sema_for_fork);
+	sema_down(&parent->sema_for_fork); // 결국 이 parent->sema_for_fork가 살린 것이다.
 	thread_exit ();
 }
 
@@ -492,6 +584,7 @@ process_wait (tid_t child_tid UNUSED) {
 	if (real_child == NULL) {
 		return -1;
 	}
+	sema_up(&parent->sema_for_fork); // 결국 이 parent->sema_for_fork가 살린 것이다. 이유는 __do_fork에서.
 	sema_down(&real_child->sema_for_wait); // parent가 wait하다가
 	// 그러면 여기서 child가 열심히 돌아가다가 이제 exit 될거고,
 	// exit 되면 sema up을 하면서 자신의 exit_num이 나올 것!
