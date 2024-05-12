@@ -350,11 +350,19 @@ filesize (int fd) {
 //실제로 읽은 byte 사이즈를 반환하고 파일을 읽지 못한 경우에는 -1을 반환시킨다
 int
 read (int fd, void *buffer, unsigned size) {
-	struct page *start = check_address(buffer);
-	struct page *end = check_address(buffer + size - 1);
+	// struct page *start = check_address(buffer);
+	// struct page *end = check_address(buffer + size - 1);
+	void *start = pg_round_down(buffer);
+	void *end = pg_round_down(buffer + size);
 
-	if (start->write == false || end->write == false) {
-		exit(-1);
+	for (void *address = start; address <= end; address += PGSIZE) {
+		struct page *pg = check_address(address);
+		if (pg == NULL) {
+			exit(-1);
+		}
+		if (pg->write == false) {
+			exit(-1);
+		}
 	}
 
 	int read_bytes = 0;
@@ -387,9 +395,21 @@ read (int fd, void *buffer, unsigned size) {
 //실제로 써지는 byte만큼을 반환한다 - 안 써지는 byte들도 있을수 있기 때문에 size 보다 더 작은 반환값이 나올수있따
 int
 write (int fd, const void *buffer, unsigned size) {
-	struct page *start = check_address(buffer);
+	//struct page *start = check_address(buffer);
 	//struct page *end = check_address(buffer + size - 1);
 	//printf("doing write syscall");
+	void *start = pg_round_down(buffer);
+	void *end = pg_round_down(buffer + size);
+
+	for (void *address = start; address <= end; address += PGSIZE) {
+		struct page *pg = check_address(address);
+		if (pg == NULL) {
+			exit(-1);
+		}
+		// if (pg->write == false) {
+		// 	exit(-1);
+		// }
+	}
 
 	int write_bytes = 0;
 	// if (size == 0) {
