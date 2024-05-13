@@ -58,12 +58,12 @@ anon_swap_in (struct page *page, void *kva) {
 	// disk에 있으면 읽은 다음에, swap in되었다는 뜻인 false으로 세팅
 	bool is_there = bitmap_test(swap_list, anon_page->bitmap_index);
 	if (is_there) {
+		// 그리고 이제 swap in 되었다는 0으로 세팅해주고
+		bitmap_set(swap_list, anon_page->bitmap_index, false);
 		// disk에 있는 data들을 kva로 읽어오면 됨
 		for (int i=0; i<8; i++) {
 			disk_read(swap_disk, (anon_page->bitmap_index)*8+i, page->frame->kva+DISK_SECTOR_SIZE*i);
 		}
-		// 그리고 이제 swap in 되었다는 0으로 세팅
-		bitmap_set(swap_list, anon_page->bitmap_index, false);
 		//printf("page addr: 0x%x, kva: 0x%x\n", page, kva);
 		//printf("kernel에 있냐 %d\n", is_kernel_vaddr(page));
 		page->frame->kva = kva;
@@ -91,15 +91,16 @@ anon_swap_out (struct page *page) {
 	if (empty_index == BITMAP_ERROR) {
 		return false; // BITMAP_ERROR라는건 거기 안에 빈공간이 없다는 거다...
 	} else {
-		// index가 잘 찾아졌으면, swap in과 반대로 disk write를 해주면 됨
+		// index가 잘 찾아졌으면 이제 swap out 되었다는 1로 세팅
+		bitmap_set(swap_list, empty_index, true);
+		anon_page->bitmap_index = empty_index;
+		// swap in과 반대로 disk write를 해주면 됨
 		for (int i=0; i<8; i++) {
 			disk_write (swap_disk, empty_index*8+i, page->frame->kva+DISK_SECTOR_SIZE*i);
 		}
-		// 그리고 이제 swap out 되었다는 1로 세팅
-		bitmap_set(swap_list, empty_index, true);
 		// page의 내용들을 disk로 다 옮겼으므로 이제 page를 reset해줘야함
 		pml4_clear_page(thread_current()->pml4, page->va);
-		anon_page->bitmap_index = empty_index;
+		pml4_set_dirty(thread_current()->pml4, page->va, 0); // dirty가 false인 상태여야함
 		//printf("swap out index: %d\n", anon_page->bitmap_index);
 		page->frame = NULL;
 
