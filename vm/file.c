@@ -42,23 +42,24 @@ static bool
 file_backed_swap_in (struct page *page, void *kva) {
 	//struct file_page *file_page UNUSED = &page->file;
 	struct file_page *file_page = &page->file;
-	if (file_page == NULL) {
-		return false;
-	}
 
-	//printf("file swap in은 잘 됨\n");
-	/* swap in 하는 것도 aux의 각 속성에 그대로 대입해주기만 하면 됨 */
-	struct segment_info *info = (struct segment_info*)malloc(sizeof(struct segment_info));
-	info->page_file = file_page->aux->page_file;
-	info->offset = file_page->aux->offset;
-	info->read_bytes = file_page->aux->read_bytes;
-	info->zero_bytes = file_page->aux->zero_bytes;
-	
-	/* 그 뒤, 실제로 file을 page로 load 해오면 됨 */
-	if (lazy_load_segment_for_mmap(page, (void *) info)) {
-		return true;
+	if (file_page != NULL) {
+		//printf("file swap in은 잘 됨\n");
+		/* swap in 하는 것도 aux의 각 속성에 그대로 대입해주기만 하면 됨 */
+		struct segment_info *info = (struct segment_info*)malloc(sizeof(struct segment_info));
+		info->page_file = file_page->aux->page_file;
+		info->offset = file_page->aux->offset;
+		info->read_bytes = file_page->aux->read_bytes;
+		info->zero_bytes = file_page->aux->zero_bytes;
+		
+		/* 그 뒤, 실제로 file을 page로 load 해오면 됨 */
+		if (lazy_load_segment_for_mmap(page, (void *) info)) {
+			return true;
+		} else {
+			free(info); // free 해야할 때는 꼭 해줘야만 한다는 것.... swap- test에서 계속 오류뜸
+			return false;
+		}
 	} else {
-		free(info);
 		return false;
 	}
 }
@@ -68,26 +69,26 @@ static bool
 file_backed_swap_out (struct page *page) {
 	//struct file_page *file_page UNUSED = &page->file;
 	struct file_page *file_page = &page->file;
-	if (file_page == NULL) {
+
+	if (file_page != NULL) {
+		//printf("file swap out은 잘 됨\n");
+		/* 이번에는 file이 적혀있는 page를 찾아서, page에 적혀있는 내용들을 file에 다시 적고
+		page를 clear 해주면 됨 */
+		if (pml4_is_dirty(thread_current()->pml4, page->va)) {
+			/* 해당 page가 dirty한 상태 (file 내용이 적혀있는 상태)면 file에 page 내용 적어준다 */
+			file_write_at(file_page->aux->page_file, page->va, file_page->aux->read_bytes, file_page->aux->offset);
+			/* anon에서 swap out 했을 때처럼 page reset 해주면 됨 */
+			pml4_clear_page(thread_current()->pml4, page->va); // file로 writeback한 이후 page 비워주고
+			pml4_set_dirty(thread_current()->pml4, page->va, 0); // 다 옮겨 적었다고 표시. dirty가 false인 상태
+		} else {
+			/* page에 아무것도 안 적혀있으면 당연히 file에 writeback 안 하지! */
+			pml4_clear_page(thread_current()->pml4, page->va); // dirty하지 않더라도 page는 clear 해줘야함. 더이상은 안 쓰는 page니까
+		}
+		page->frame = NULL; // frame은 NULL한 상태로 초기화 해줘야 함
+		return true;
+	} else {
 		return false;
 	}
-
-	//printf("file swap out은 잘 됨\n");
-	/* 이번에는 file이 적혀있는 page를 찾아서, page에 적혀있는 내용들을 file에 다시 적고
-	page를 clear 해주면 됨 */
-	if (pml4_is_dirty(thread_current()->pml4, page->va)) {
-		/* 해당 page가 dirty한 상태 (file 내용이 적혀있는 상태)면 file에 page 내용 적어준다 */
-		file_write_at(file_page->aux->page_file, page->va, file_page->aux->read_bytes ,file_page->aux->offset);
-		pml4_set_dirty(thread_current()->pml4, page->va, 0); // 다 옮겨 적었다고 표시
-	}
-	/* page에 아무것도 안 적혀있으면 당연히 file에 writeback 안 하지! */
-
-	/* 이제 page에 있는 정보들을 file로 writeback한거니까, 이제 page를 비워줘야함 */
-	pml4_clear_page(thread_current()->pml4, page->va); // page 완전히 clear 해주고,
-	page->frame = NULL; // frame은 NULL한 상태로 초기화 해줘야 함
-
-	return true;
-
 }
 
 /* Destory the file backed page. PAGE will be freed by the caller. */
