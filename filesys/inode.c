@@ -6,6 +6,7 @@
 #include "filesys/filesys.h"
 #include "filesys/free-map.h"
 #include "threads/malloc.h"
+#include "filesys/fat.h"
 
 /* Identifies an inode. */
 #define INODE_MAGIC 0x494e4f44
@@ -17,6 +18,7 @@ struct inode_disk {
 	off_t length;                       /* File size in bytes. */
 	unsigned magic;                     /* Magic number. */
 	uint32_t unused[125];               /* Not used. */
+	bool directory;			//이 Inode가 파일인지 디렉토리인지
 };
 
 /* Returns the number of sectors to allocate for an inode SIZE
@@ -27,6 +29,7 @@ bytes_to_sectors (off_t size) {
 }
 
 /* In-memory inode. */
+//컴퓨터가 인식하는 파일 구조체 느낌이라고 생각하면 된다
 struct inode {
 	struct list_elem elem;              /* Element in inode list. */
 	disk_sector_t sector;               /* Sector number of disk location. */
@@ -42,11 +45,33 @@ struct inode {
  * POS. */
 static disk_sector_t
 byte_to_sector (const struct inode *inode, off_t pos) {
+	//해당 inode를 갖고 있는 sector를 반환하는 함수이다
+	//파일은 하나 이상의 섹터에 쪼개져서 저장될 것
 	ASSERT (inode != NULL);
+	/* 이전 방식을 파일이 연속적으로 할당되었다는 가정하에 함수가 작성되어있는데
+	이제는 FAT를 이용해서 index 방식으로 여기저기 흩어져있는 섹터들에 파일을 저장하니까
+	이거에 맞게 수정 필요.
 	if (pos < inode->data.length)
 		return inode->data.start + pos / DISK_SECTOR_SIZE;
 	else
 		return -1;
+	*/
+	if (pos < inode->data.length) {
+		//현재 inode가 들어있는 섹터를 가져온다
+		cluster_t pos_clst = sector_to_cluster(inode->data.start);
+		cluster_t clst;
+		//이제 해당 offset pos을 가진 위치로 가서 거기에 담겨있는 value를 찾고 섹터값으로 변환해줘야한다 
+		for (int i = 0; i < (pos / DISK_SECTOR_SIZE); i++) {
+			clst = fat_get(pos_clst);
+			if (clst == 0) {
+				return -1;
+			}
+			pos_clst = clst;
+		}
+		return cluster_to_sector(pos_clst);
+	} else {
+		return -1;
+	}
 }
 
 /* List of open inodes, so that opening a single inode twice
@@ -76,6 +101,8 @@ inode_create (disk_sector_t sector, off_t length) {
 	ASSERT (sizeof *disk_inode == DISK_SECTOR_SIZE);
 
 	disk_inode = calloc (1, sizeof *disk_inode);
+	//FAT table안에서 빈 cluster들을 불러와서 파일 크기에 맞게 클러스터 체인을 만들어준다
+	//이때 실제 값들을 넣어주는게 아닌 흩어진 섹터들을 연결해주는 작업만 한다!
 	if (disk_inode != NULL) {
 		size_t sectors = bytes_to_sectors (length);
 		disk_inode->length = length;
@@ -99,6 +126,7 @@ inode_create (disk_sector_t sector, off_t length) {
 /* Reads an inode from SECTOR
  * and returns a `struct inode' that contains it.
  * Returns a null pointer if memory allocation fails. */
+//파일이나 디렉토리를 열때 호출되는 이 함수를 통해서 inode구조체가 생성이 되어 메모리로 올라온다
 struct inode *
 inode_open (disk_sector_t sector) {
 	struct list_elem *e;
