@@ -266,3 +266,10 @@ cluster_to_sector (cluster_t clst) {
 	/* TODO: Your code goes here. */
 	return fat_fs->data_start + (clst - 1) * SECTORS_PER_CLUSTER;
 }
+
+//inode.c에서 쓰이는 conversion 함수
+cluster_t
+sector_to_cluster (disk_sector_t sector) {
+	disk_sector_t difference = sector - fat_fs->data_start;
+	return difference / SECTORS_PER_CLUSTER + 1;
+}

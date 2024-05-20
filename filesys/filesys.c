@@ -7,6 +7,8 @@
 #include "filesys/inode.h"
 #include "filesys/directory.h"
 #include "devices/disk.h"
+#include "filesys/fat.h"
+#include "threads/thread.h"
 
 /* The disk that contains the file system. */
 struct disk *filesys_disk;
@@ -60,13 +62,40 @@ filesys_done (void) {
 bool
 filesys_create (const char *name, off_t initial_size) {
 	disk_sector_t inode_sector = 0;
+	struct dir *dir;
+
+	#ifdef FILESYS
+	struct thread *current = thread_current();
+	//struct dir *directory = current->current_dir;
+	if (current->current_dir == NULL) {
+		dir = dir_open_root();
+	} else {
+		dir = current->current_dir;
+	}
+	cluster_t clst = fat_create_chain(0);
+	// if (clst == 0) {
+	// 	dir_close(dir);
+	// }
+	inode_sector = cluster_to_sector(clst);
+	create_file_inode(inode_open(inode_sector));
+	bool success = (inode_create (inode_sector, initial_size)
+			&& dir_add (dir, name, inode_sector));
+	//dir = directory;
+	#else
 	struct dir *dir = dir_open_root ();
 	bool success = (dir != NULL
 			&& free_map_allocate (1, &inode_sector)
 			&& inode_create (inode_sector, initial_size)
 			&& dir_add (dir, name, inode_sector));
+	#endif
 	if (!success && inode_sector != 0)
-		free_map_release (inode_sector, 1);
+		//여기를 Fat_remove_chain으로 바꿔야할듯?
+		#ifdef FILESYS
+			fat_remove_chain(inode_sector, 0);
+		#else
+			free_map_release (inode_sector, 1);
+		#endif
+	
 	dir_close (dir);
 
 	return success;
