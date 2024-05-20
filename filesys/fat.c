@@ -18,12 +18,12 @@ struct fat_boot {
 
 /* FAT FS */
 struct fat_fs {
-	struct fat_boot bs;
-	unsigned int *fat;
-	unsigned int fat_length;
-	disk_sector_t data_start;
-	cluster_t last_clst;
-	struct lock write_lock;
+	struct fat_boot bs; //부팅 시 FAT 정보를 담는 구조체
+	unsigned int *fat;	//FAT
+	unsigned int fat_length;	//file system안에 들어가있는 섹터의 수
+	disk_sector_t data_start;	//비어있는 첫 섹터
+	cluster_t last_clst;	//file이 할당받은 cluster 중, 마지막 cluster
+	struct lock write_lock;	
 };
 
 static struct fat_fs *fat_fs;
@@ -153,11 +153,35 @@ fat_boot_create (void) {
 void
 fat_fs_init (void) {
 	/* TODO: Your code goes here. */
+	//fat_fs의 fat_length랑 data_start 필드를 초기화시켜준다
+	//fat_length는 파일 시스템에 있는 총 cluster의 개수를 담고 있어야한다 (파일 시스템 자체가 FAT이다)
+	//cluster는 여러 sector들로 이루어져있다
+	struct fat_boot booting_info = fat_fs->bs;
+	fat_fs->fat_length = booting_info.total_sectors / SECTORS_PER_CLUSTER;
+	//data_start은 어떤 sector에서부터 파일을 저장할 수 있는지를 알려준다
+	//실제 데이터 부분들은 fat table의 entries 뒤에 오기 때문에 fat가 시작한 지점에서 fat의 총 크기를 더하면 data의 시작점을 구할 수 있다
+	fat_fs->data_start = booting_info.fat_start + booting_info.fat_sectors;
+	//last_clst랑 write_lock은 다른 곳에서 init안되고 있으니까 여기서 해줘야한다
+	fat_fs->last_clst = booting_info.total_sectors + 1;
+	lock_init(&fat_fs->write_lock);
 }
 
 /*----------------------------------------------------------------------------*/
 /* FAT handling                                                               */
 /*----------------------------------------------------------------------------*/
+
+cluster_t
+get_free_cluster() {
+	cluster_t free_space = 0;
+	for (cluster_t entry = 1; entry < fat_fs->fat_length; entry++) {
+		if (fat_get(entry) == 0) {
+			//fat가 값이 0이면 free하다는 뜻이니까 이 처음 위치를 받아서 이걸 clst의 값으로 해서 연결시킨다
+			free_space = entry;
+		}
+	}
+
+	return free_space;
+}
 
 /* Add a cluster to the chain.
  * If CLST is 0, start a new chain.
@@ -165,6 +189,32 @@ fat_fs_init (void) {
 cluster_t
 fat_create_chain (cluster_t clst) {
 	/* TODO: Your code goes here. */
+	//int *fat = fat_fs->fat;
+	cluster_t free_space = get_free_cluster();
+
+	if (clst == 0) {
+		//여기서 새로운 chain을 만드니까 지금 들어온 clst가 chain의 첫 클러스터가 된다
+		//새로운 Chain을 만들기 위해 free한 공간을 하나 찾아서 배정해줘야한다
+		//아직 이거만 있으니까 end of file일테니 EOChain으로 표시해준다
+		if (free_space != 0) {
+			fat_put(free_space, EOChain);
+		} else {
+			return 0;
+		}
+	} else {
+		//해당 clst에 새로운 cluster를 하나 추가해주는거기 때문에 
+		//할당할 수 있는 free cluster를 찾고 이 위치넘버를 현재 clst의 값으로 넣어서 연결해줘야한다
+		if (free_space != 0) {
+			fat_put(clst, free_space);
+		} else {
+			return 0;
+		}
+
+		//여기서도 이 새롭게 추가해줄 cluster가 결국에 이 chain의 마지막 부분이 되는거니까 EOChain으로 세팅해야한다
+		fat_put(free_space, EOChain);
+	}
+
+	return free_space;
 }
 
 /* Remove the chain of clusters starting from CLST.
@@ -172,22 +222,54 @@ fat_create_chain (cluster_t clst) {
 void
 fat_remove_chain (cluster_t clst, cluster_t pclst) {
 	/* TODO: Your code goes here. */
+	//clst에서 시작해서 이어지는 cluster들을 제거해야하니까 여기서 EOChain을 가진 cluster를 찾을때까지
+	//각 fat entry에 0으로 free하다고 값을 바꿔줘야한다
+	cluster_t entry = fat_get(clst);	
+	while (entry != EOChain) {
+		cluster_t curr_val = entry;
+		fat_put(entry, 0);
+		entry = fat_get(curr_val);
+	}
+
+	if (pclst == 0) {
+		//그럼 clst가 beginning of chain이기 때문에 이거를 0으로 바꿔줘야한다
+		fat_put(clst, 0);
+	} else {
+		//0이 아닌경우에는 우리가 제거한 chain of cluster의 바로 직전 entry를 가지고 있으니
+		//지금 제거한거랑 구분하기 위해서 이 pclst는 end of chain이라는걸 표시해줘야한다
+		fat_put(pclst, EOChain);
+	}
 }
 
 /* Update a value in the FAT table. */
 void
 fat_put (cluster_t clst, cluster_t val) {
 	/* TODO: Your code goes here. */
+	//clst가 포인트하고 있는 FAT entry에 val로 업데이트해준다
+	//결국 이 clst번째에 있는 FAT가 다른 cluster랑 연결되도록 point하는 index를 바꿔주는거다
+	int *fat = fat_fs->fat;
+	fat[clst] = val;
 }
 
 /* Fetch a value in the FAT table. */
 cluster_t
 fat_get (cluster_t clst) {
 	/* TODO: Your code goes here. */
+	//clst가 어떤 cluster를 point하는지를 찾는거기 때문에 FAT에서 clst에 들어있는 값만 빼오면 된다
+	int *fat = fat_fs->fat;
+	return fat[clst];
 }
 
 /* Covert a cluster # to a sector number. */
 disk_sector_t
 cluster_to_sector (cluster_t clst) {
 	/* TODO: Your code goes here. */
+	return fat_fs->data_start + (clst - 1) * SECTORS_PER_CLUSTER;
+}
+
+//inode.c에서 쓰이는 conversion 함수
+cluster_t
+sector_to_cluster (disk_sector_t sector) {
+	disk_sector_t difference = sector - fat_fs->data_start;
+	return difference / SECTORS_PER_CLUSTER + 1;
 }

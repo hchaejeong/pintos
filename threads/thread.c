@@ -287,6 +287,7 @@ thread_create (const char *name, int priority,
 	// printf("current thread name: %s\n", thread_current()->name);
 	// printf("new thread name: %s\n", &t->name);
 	// list_push_back(&thread_current()->my_child, &t->my_child_elem);;
+	t->current_dir = thread_current()->current_dir;
 
 	return tid;
 }
@@ -906,6 +907,8 @@ init_thread (struct thread *t, const char *name, int priority) {
 	#ifdef VM
 		t->user_stack_rsp = 0;
 	#endif
+
+	t->current_dir = NULL;
 }
 
 /* Chooses and returns the next thread to be scheduled.  Should

@@ -6,6 +6,7 @@
 #include "filesys/filesys.h"
 #include "filesys/free-map.h"
 #include "threads/malloc.h"
+#include "filesys/fat.h"
 
 /* Identifies an inode. */
 #define INODE_MAGIC 0x494e4f44
@@ -17,6 +18,7 @@ struct inode_disk {
 	off_t length;                       /* File size in bytes. */
 	unsigned magic;                     /* Magic number. */
 	uint32_t unused[125];               /* Not used. */
+	bool directory;			//이 Inode가 파일인지 디렉토리인지
 };
 
 /* Returns the number of sectors to allocate for an inode SIZE
@@ -27,6 +29,7 @@ bytes_to_sectors (off_t size) {
 }
 
 /* In-memory inode. */
+//컴퓨터가 인식하는 파일 구조체 느낌이라고 생각하면 된다
 struct inode {
 	struct list_elem elem;              /* Element in inode list. */
 	disk_sector_t sector;               /* Sector number of disk location. */
@@ -42,11 +45,33 @@ struct inode {
  * POS. */
 static disk_sector_t
 byte_to_sector (const struct inode *inode, off_t pos) {
+	//해당 inode를 갖고 있는 sector를 반환하는 함수이다
+	//파일은 하나 이상의 섹터에 쪼개져서 저장될 것
 	ASSERT (inode != NULL);
+	/* 이전 방식을 파일이 연속적으로 할당되었다는 가정하에 함수가 작성되어있는데
+	이제는 FAT를 이용해서 index 방식으로 여기저기 흩어져있는 섹터들에 파일을 저장하니까
+	이거에 맞게 수정 필요.
 	if (pos < inode->data.length)
 		return inode->data.start + pos / DISK_SECTOR_SIZE;
 	else
 		return -1;
+	*/
+	if (pos < inode->data.length) {
+		//현재 inode가 들어있는 섹터를 가져온다
+		cluster_t pos_clst = sector_to_cluster(inode->data.start);
+		cluster_t clst;
+		//이제 해당 offset pos을 가진 위치로 가서 거기에 담겨있는 value를 찾고 섹터값으로 변환해줘야한다 
+		for (int i = 0; i < (pos / DISK_SECTOR_SIZE); i++) {
+			clst = fat_get(pos_clst);
+			if (clst == 0) {
+				return -1;
+			}
+			pos_clst = clst;
+		}
+		return cluster_to_sector(pos_clst);
+	} else {
+		return -1;
+	}
 }
 
 /* List of open inodes, so that opening a single inode twice
@@ -75,11 +100,51 @@ inode_create (disk_sector_t sector, off_t length) {
 	 * one sector in size, and you should fix that. */
 	ASSERT (sizeof *disk_inode == DISK_SECTOR_SIZE);
 
+	//disk inode를 만들고
 	disk_inode = calloc (1, sizeof *disk_inode);
 	if (disk_inode != NULL) {
 		size_t sectors = bytes_to_sectors (length);
 		disk_inode->length = length;
 		disk_inode->magic = INODE_MAGIC;
+		
+		#if FILESYS
+		//새로운 chain을 만들어줘야하니까 0으로 입력해서 new chain이 allocate가 되는지 보고 (free한 공간 충분)
+		cluster_t allocate = fat_create_chain(0);
+		if (allocate == 0) {
+			//fat안에 0인 연속적인 free한 공간이 있어야 하니까 0이 나오면 fail to allocate new cluster인거다
+			free(disk_inode);
+			return false;
+		}
+		//FAT table안에서 빈 cluster들을 불러와서 파일 크기에 맞게 클러스터 체인을 만들어준다
+		//이때 실제 값들을 넣어주는게 아닌 흩어진 섹터들을 연결해주는 작업만 한다!
+		cluster_t new_clst = allocate;
+		while (sectors > 0) {
+			new_clst = fat_create_chain(new_clst);
+			if (new_clst == 0) {
+				//chain에 cluster를 추가하는게 실패한거니까 free하고 revmoe해줘야한다
+				fat_remove_chain(allocate, 0);
+				return false;
+			}
+
+			sectors--;
+		}
+		//여기까지 나온거면 chain이 다 성공적으로 만들어진거니까 이때 처음 만든 sector를 start로 지정해준다
+		disk_inode->start = cluster_to_sector(allocate);
+
+		//이제 FAT 테이블에서는 다음 클러스터 번호가 잘 적혀있을거다
+		//이제 또 하나하나씩 들어가서 disk_write을 호출해 클러스터에 해당 파일을 써줘야한다 
+		disk_write(filesys_disk, sector, disk_inode);
+		if (sectors > 0) {
+			static char zeros[DISK_SECTOR_SIZE]; 
+			cluster_t for_write = allocate;
+			while (sectors > 0) {
+				disk_write(filesys_disk, cluster_to_sector(for_write), zeros);
+				//FAT안에 다음 cluster의 위치가 담겨있기때문에 이렇게 다음 cluster를 찾는다
+				for_write = fat_get(for_write);
+			}
+		}
+		success = true;
+		#else
 		if (free_map_allocate (sectors, &disk_inode->start)) {
 			disk_write (filesys_disk, sector, disk_inode);
 			if (sectors > 0) {
@@ -91,6 +156,7 @@ inode_create (disk_sector_t sector, off_t length) {
 			}
 			success = true; 
 		} 
+		#endif
 		free (disk_inode);
 	}
 	return success;
@@ -99,6 +165,7 @@ inode_create (disk_sector_t sector, off_t length) {
 /* Reads an inode from SECTOR
  * and returns a `struct inode' that contains it.
  * Returns a null pointer if memory allocation fails. */
+//파일이나 디렉토리를 열때 호출되는 이 함수를 통해서 inode구조체가 생성이 되어 메모리로 올라온다
 struct inode *
 inode_open (disk_sector_t sector) {
 	struct list_elem *e;
@@ -159,9 +226,13 @@ inode_close (struct inode *inode) {
 
 		/* Deallocate blocks if removed. */
 		if (inode->removed) {
-			free_map_release (inode->sector, 1);
-			free_map_release (inode->data.start,
-					bytes_to_sectors (inode->data.length)); 
+			#ifdef FILESYS
+				fat_remove_chain(sector_to_cluster(inode->sector), 0);
+			#else
+				free_map_release (inode->sector, 1);
+				free_map_release (inode->data.start,
+						bytes_to_sectors (inode->data.length)); 
+			#endif
 		}
 
 		free (inode); 
@@ -242,7 +313,39 @@ inode_write_at (struct inode *inode, const void *buffer_, off_t size,
 
 	while (size > 0) {
 		/* Sector to write, starting byte offset within sector. */
-		disk_sector_t sector_idx = byte_to_sector (inode, offset);
+		disk_sector_t sector_idx = byte_to_sector (inode, offset + size);
+		if (sector_idx == -1) {
+			//offset에 inode가 data를 가지고 있지 않은 경우이기 때문에 file을 늘려줘야한다
+			int position = offset + size;
+			//inode->data.length는 파일 사이즈 in bytes
+			int start = (inode->data.length + DISK_SECTOR_SIZE - 1) / DISK_SECTOR_SIZE;
+			int end = (position + DISK_SECTOR_SIZE - 1) / DISK_SECTOR_SIZE;
+			
+			cluster_t new_chain;
+			if (inode->data.length == 0) {
+				//file growth이 필요한거기 때문에 새로운 chain을 생성해줘야한다
+				new_chain = fat_create_chain(0);
+				if (new_chain == 0) {
+					//chain이 만들어지지 않으면 file growth가 안되고 결국 실제로 데이터가 쓰여지지 않으니까 바로 0으로 반환시킨다
+					return 0;
+				} else {
+					//inode에 정보를 업데이트 해줘야한다
+					inode->data.start = cluster_to_sector(new_chain);
+				}
+			}
+			
+			cluster_t chain = new_chain;
+			for (int i = start; i < end; i++) {
+				chain = fat_create_chain(chain);
+				if (chain == 0) {
+					return 0;
+				}
+			}
+			//만약 여기까지 잘 나오면 chain이 우리가 원하는 만큼까지 커지는게 성공한거니까
+			//그럼 inode의 데이터에 length를 우리가 쓰고 싶었던 크기를 넣어주면 된다
+			inode->data.length = position;
+		}
+		sector_idx = byte_to_sector(inode, offset);
 		int sector_ofs = offset % DISK_SECTOR_SIZE;
 
 		/* Bytes left in inode, bytes left in sector, lesser of the two. */
@@ -310,4 +413,21 @@ inode_allow_write (struct inode *inode) {
 off_t
 inode_length (const struct inode *inode) {
 	return inode->data.length;
+}
+
+void
+create_directory_inode (struct inode *inode) {
+	inode->data.directory = true;
+	disk_write(filesys_disk, inode->sector, &inode->data);
+}
+
+void
+create_file_inode (struct inode *inode) {
+	inode->data.directory = false;
+	disk_write(filesys_disk, inode->sector, &inode->data);
+}
+
+bool
+inode_is_directory (const struct inode *inode) {
+	return inode->data.directory;
 }
