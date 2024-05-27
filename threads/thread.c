@@ -15,6 +15,8 @@
 #ifdef USERPROG
 #include "userprog/process.h"
 #endif
+//project 4
+#include "filesys/directory.h"
 
 /* Random value for struct thread's `magic' member.
    Used to detect stack overflow.  See the big comment at the top
@@ -286,8 +288,17 @@ thread_create (const char *name, int priority,
 	// 이걸 하니까 child list가 empty가 아님!!
 	// printf("current thread name: %s\n", thread_current()->name);
 	// printf("new thread name: %s\n", &t->name);
-	// list_push_back(&thread_current()->my_child, &t->my_child_elem);;
+	// list_push_back(&thread_current()->my_child, &t->my_child_elem);
+	
+	// 새로 만들 때 부모의 dir을 일단 그대로 가져와야함
 	t->current_dir = thread_current()->current_dir;
+	/*
+	if (thread_current()->current_dir == NULL) {
+		t->current_dir = dir_open_root();
+	} else {
+		t->current_dir = dir_reopen(thread_current()->current_dir);
+	}
+	*/
 
 	return tid;
 }
@@ -908,7 +919,7 @@ init_thread (struct thread *t, const char *name, int priority) {
 		t->user_stack_rsp = 0;
 	#endif
 
-	t->current_dir = NULL;
+	t->current_dir = NULL; // current dir 초기화
 }
 
 /* Chooses and returns the next thread to be scheduled.  Should

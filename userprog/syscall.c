@@ -18,6 +18,10 @@
 #include "threads/init.h"
 #include "devices/input.h"
 #include "vm/vm.h"
+// project 4
+#include "filesys/directory.h"
+#include "filesys/inode.h"
+#include "filesys/fat.h"
 
 struct lock file_lock;
 
@@ -43,6 +47,11 @@ int exec (const char *file);
 int wait(tid_t pid);
 void *mmap(void *addr, size_t length, int writable, int fd, off_t offset);
 void munmap(void *addr);
+bool chdir (const char *dir);
+bool mkdir (const char *dir);
+bool readdir (int fd, char *name);
+bool isdir (int fd);
+int inumber (int fd);
 
 /* System call.
  *
@@ -149,6 +158,22 @@ syscall_handler (struct intr_frame *f UNUSED) {
 			break;
 		case (SYS_MUNMAP):
 			munmap((void *) f->R.rdi);
+			break;
+		// project 4 부분의 system call!
+		case (SYS_CHDIR):
+			f->R.rax = chdir((const char *) f->R.rdi);
+			break;
+		case (SYS_MKDIR):
+			f->R.rax = mkdir((const char *) f->R.rdi);
+			break;
+		case (SYS_READDIR):
+			f->R.rax = readdir((int) f->R.rdi, (char *) f->R.rsi);
+			break;
+		case (SYS_ISDIR):
+			f->R.rax = isdir((int) f->R.rdi);
+			break;
+		case (SYS_INUMBER):
+			f->R.rax = inumber((int) f->R.rdi);
 			break;
 		default:
 			printf ("system call!\n");
@@ -683,4 +708,222 @@ void munmap(void *addr) {
 
 	// 그냥 여기서는 아무 상관없이, do_munmap으로만 가면 되는듯?
 	do_munmap(addr);
+}
+
+
+
+/* project 4 */
+
+bool chdir (const char *dir) {
+	/* process의 현재 작업 directory를 dir로 변경하면 됨.
+	dir은 상대적, 절대적 모두 가능
+	성공하면 true, 실패하면 false 반환 */
+
+	check_address(dir);
+
+	bool success = true;
+
+	// 먼저 dir이 NULL이면 안되겠지 ㅇㅇ
+	if (dir == NULL) {
+		success = false;
+	}
+
+	struct dir *real_dir = dir_open_root(); // 일단 기본이 되는 root 경로로 열어두고 시작
+	if (dir[0] != '/') {
+		// 그런데 dir이 상대 경로면 현재 thread의 dir로 세팅해둬야 함
+		// '/'로 시작하면 절대 경로, 아니면 상대 경로
+		// 그냥 open ㄴㄴ. reopen함으로써 서로 간섭 안나게 해야함
+		real_dir = dir_reopen(thread_current()->current_dir);
+	}
+
+	// dir도 복제본을 만들어둬야 함. 안 그러면 저 dir도 망가진다 볼 수 있음
+	char *copy_dir = (char *)malloc((strlen(dir)+1) * sizeof(char));
+	strlcpy(copy_dir, dir, strlen(dir) + 1);
+
+	// 채정이가 process.c의 process_exec에서 한 것처럼 나누면 됨
+	char * save;
+	char * dir_token = strtok_r(copy_dir, "/", &save);
+	struct inode *inode = NULL;
+	while (dir_token != NULL) {
+		// 주어진 dir 안에 token 이름의 파일이 있는지 탐색, 있으면 inode 정보 저장
+		bool success_lookup = dir_lookup(real_dir, dir_token, &inode);
+		// 이렇게 생긴 inode가 directory인지 판단
+		bool is_inode_dir = inode_is_directory(inode); // 채정이가 만들어 둔 inode_is_directory 함수를 쓰면 된다
+		if (!(success_lookup && is_inode_dir)) {
+			// lookup한 결과가 없거나, inode가 directory가 아니면 (file이면) return false임
+			dir_close(real_dir); // 일단 open한 dir은 닫아야지
+			success = false;
+			break; // while문에서 바로 나와서 return false하면 됨
+		} else {
+			dir_close(real_dir); // 기존 dir 정보는 닫고
+			real_dir = dir_open(inode); // inode에 이제 dir이 들어가 있을테니까, 그 dir 정보를 열기
+			// 이 과정을 dir 끝까지 돌리는거지!
+			dir_token = strtok_r(NULL, "/", &save);
+		}
+	}
+
+	free(copy_dir);
+
+	if (success) {
+		// 위 과정을 돌면서 아무 문제가 없었으면
+		// 이제 실제 thread의 dir을 바꿔주는 작업을 하면 됨
+		// real_dir에 저장해줘야 할 dir이 저장이 되어있음
+		dir_close(thread_current()->current_dir);
+		thread_current()->current_dir = real_dir;
+		return true;
+	} else {
+		// 위 과정을 돌면서 success가 false가 되면 return false
+		return false;
+	}
+}
+
+bool mkdir (const char *dir) {
+	/* 상대적, 절대적 모두 가능한 dir이라는 directory를 만듦.
+	성공하면 true, 실패하면 false 반환.
+	dir이 이미 존재하거나 & 그 앞의 경로가 없는 경우에는 false
+	mkdir("/a/b/c")는 /a/b가 이미 exist하고 /a/b/c가 없는 경우에만 성공한다는 것 */
+
+	if (dir == NULL || strlen(dir) == 0) {
+		return false;
+	}
+	// 여기는 chdir과 같음. 경로 초기 세팅
+	struct dir *real_dir = dir_open_root(); // 일단 기본이 되는 root 경로로 열어두고 시작
+	if (dir[0] != '/') {
+		// 그런데 dir이 상대 경로면 현재 thread의 dir로 세팅해둬야 함
+		// '/'로 시작하면 절대 경로, 아니면 상대 경로
+		// 그냥 open ㄴㄴ. reopen함으로써 서로 간섭 안나게 해야함
+		real_dir = dir_reopen(thread_current()->current_dir);
+	}
+
+	// chdir이랑 일단은 같은 방법으로 parse해서 돌리기
+	char *copy_dir = (char *)malloc((strlen(dir)+1) * sizeof(char));
+	strlcpy(copy_dir, dir, strlen(dir) + 1);
+
+	char *save;
+	char *dir_token = strtok_r(copy_dir, "/", &save);
+	struct inode *inode = NULL;
+
+	// 경로의 마지막은 file name임. 이걸 빼내와야 함. 일단 malloc으로 공간 만들어주기
+	char *file_name = (char *)malloc((strlen(dir)+1) * sizeof(char));
+	if (dir_token == NULL) {
+		strlcpy(file_name, ".", 2); // "/"인 경우에는, file_name은 .이 되어야 함
+	}
+
+	// 링크 파일인 경우는 앞서서 한 번 더 돌리면 될 것 같음
+	
+	// 여기서의 목적은 file_name만 parsing 해내는 것!
+	while (dir_token != NULL) {
+		bool success_lookup = dir_lookup(real_dir, dir_token, &inode);
+		bool is_inode_dir = inode_is_directory(inode);
+		if (!(success_lookup && is_inode_dir)) {
+			dir_close(real_dir);
+			inode_close(inode);
+			real_dir = NULL; // dir이 없는 거니까 dir은 null로 세팅해줘야
+			break;
+		} else {
+			dir_close(real_dir);
+			real_dir = dir_open(inode);
+			// 근데 여기서, 경로의 마지막은 file의 이름이므로 그걸 저장해야함
+			char *check_next = strtok_r(NULL, "/", &save);
+			if (check_next == NULL) {
+				// file_name에 file name 복사해두기!
+				strlcpy(file_name, dir_token, strlen(dir_token) + 1);
+				break;
+			} else {
+				dir_token = file_name;
+			}
+		}
+	}
+
+	// 새로운 chain을 만들어서 inode sector 번호를 받아야 함
+	cluster_t inode_sector_num = fat_create_chain(0);
+	// dir이 NULL이면 당연히 error
+	if (real_dir == NULL) { goto error; }
+	
+	// 이렇게 만들어진 sector에 위에서 받은 file_name의 dir을 만들어야 함. 안 만들어지면 당연히 error
+	bool create_dir = dir_create(inode_sector_num, 16);
+	if (!create_dir) { goto error; }
+
+	// dir에 file_name entry를 추가해줘야 함. 잘 안되면 당연히 goto error
+	bool add_file_name = dir_add(real_dir, file_name, inode_sector_num);
+	if (!add_file_name) { goto error; }
+
+	dir_close(real_dir);
+	free(copy_dir);
+	free(file_name);
+
+	return true;
+error:
+	if (inode_sector_num != 0) {
+		fat_remove_chain(inode_sector_num, 0);
+	}
+	dir_close(real_dir);
+	free(copy_dir);
+	free(file_name);
+	return false;
+}
+
+bool readdir (int fd, char *name) {
+
+	check_address(name);
+
+	bool check = true;
+	struct file *file = NULL;
+
+	if (fd == NULL || name == NULL) {
+		check = false;
+	} else {
+		struct fd_structure* fd_elem = find_by_fd_index(fd);
+		if (fd_elem == NULL) {
+			check = false;
+		} else {
+			file = fd_elem->current_file;
+			if (file == NULL) {
+				check = false;
+			} else {
+				// inode가 dir이면 true, 아니면 false
+				check = inode_is_directory(file_get_inode(file));
+			}
+		}
+	}
+	
+	if (check) {
+		struct dir *file_pointer = file; // file을 가리키는 pointer을 dir 형태로 저장
+		return dir_readdir(file_pointer, name);
+	} else {
+		return false;
+	}
+}
+
+bool isdir (int fd) {
+	/* fd가 directory를 나타내면 true, 그냥 file을 나타내면 false */
+	struct fd_structure* fd_elem = find_by_fd_index(fd);
+	if (fd_elem == NULL) {
+		return false;
+	} else {
+		struct file *file = fd_elem->current_file;
+		if (file == NULL) {
+			return false;
+		} else {
+			return inode_is_directory(file_get_inode(file));
+		}
+	}
+}
+
+int inumber (int fd) {
+	/* file 또는 dir을 표현하는 fd의 inode number을 반환
+	inode number은 file이나 directory를 지속적으로 식별함
+	file이 존재하는 동안은 고유함.
+	pintos에서는 inode의 sector num이 inode num으로 사용되면 됨*/
+	struct fd_structure* fd_elem = find_by_fd_index(fd);
+		if (fd_elem == NULL) {
+		return 0;
+	} else {
+		struct file *file = fd_elem->current_file;
+		if (file == NULL) {
+			return 0;
+		} else {
+			return inode_get_inumber(file_get_inode(file));
+		}
+	}
 }

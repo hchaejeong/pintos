@@ -28,6 +28,7 @@ dir_create (disk_sector_t sector, size_t entry_cnt) {
 		struct inode *opened = inode_open(sector);
 		create_directory_inode(opened);
 	}
+	return created; // return값이 이게 안 추가되어있어서.. 
 }
 
 /* Opens and returns the directory for the given INODE, of which
@@ -211,6 +212,11 @@ dir_readdir (struct dir *dir, char name[NAME_MAX + 1]) {
 
 	while (inode_read_at (dir->inode, &e, sizeof e, dir->pos) == sizeof e) {
 		dir->pos += sizeof e;
+		// dir 경로 안에 .나 .. 있으면 그건 pass 해야함
+		// strcmp의 반환 값이 0이면 같다는 것임
+		if (strcmp(e.name, ".") == 0 || strcmp(e.name, "..") == 0) {
+			continue;
+		}
 		if (e.in_use) {
 			strlcpy (name, e.name, NAME_MAX + 1);
 			return true;
