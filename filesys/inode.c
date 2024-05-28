@@ -17,7 +17,7 @@ struct inode_disk {
 	disk_sector_t start;                /* First data sector. */
 	off_t length;                       /* File size in bytes. */
 	unsigned magic;                     /* Magic number. */
-	uint32_t unused[125];               /* Not used. */
+	uint32_t unused[124];               /* Not used. */
 	bool directory;			//이 Inode가 파일인지 디렉토리인지
 };
 
@@ -68,7 +68,7 @@ byte_to_sector (const struct inode *inode, off_t pos) {
 			}
 			pos_clst = clst;
 		}
-		return cluster_to_sector(clst);
+		return cluster_to_sector(pos_clst);
 	} else {
 		return -1;
 	}
@@ -98,7 +98,7 @@ inode_create (disk_sector_t sector, off_t length) {
 
 	/* If this assertion fails, the inode structure is not exactly
 	 * one sector in size, and you should fix that. */
-	printf("size of disk inode: %d", DISK_SECTOR_SIZE);
+	//printf("size of disk_inode: %d", sizeof *disk_inode);
 	ASSERT (sizeof *disk_inode == DISK_SECTOR_SIZE);
 
 	disk_inode = calloc (1, sizeof *disk_inode);
@@ -111,29 +111,40 @@ inode_create (disk_sector_t sector, off_t length) {
 		
 		#if FILESYS
 		//새로운 chain을 만들어줘야하니까 0으로 입력해서 new chain이 allocate가 되는지 보고 (free한 공간 충분)
-		cluster_t allocate = fat_create_chain(0);
-		if (allocate == 0) {
-			//fat안에 0인 연속적인 free한 공간이 있어야 하니까 0이 나오면 fail to allocate new cluster인거다
-			fat_remove_chain(allocate, 0);
-			return false;
-		}
-		//FAT table안에서 빈 cluster들을 불러와서 파일 크기에 맞게 클러스터 체인을 만들어준다
-		//이때 실제 값들을 넣어주는게 아닌 흩어진 섹터들을 연결해주는 작업만 한다!
-		cluster_t new_clst = allocate;
-		size_t count = sectors;
-		while (count > 0) {
-			new_clst = fat_create_chain(new_clst);
-			if (new_clst == 0) {
-				//chain에 cluster를 추가하는게 실패한거니까 free하고 revmoe해줘야한다
-				fat_remove_chain(allocate, 0);
-				//free(disk_inode);
+		cluster_t allocate;
+		size_t count;
+		if (sectors == 0) {
+			disk_write(filesys_disk, sector, disk_inode);
+			success = true;
+		} else {
+			//새로운 클러스터 체인을 일단 생성해줘야한다
+			allocate = fat_create_chain(0);
+			if (allocate == 0) {
+				//fat안에 0인 연속적인 free한 공간이 있어야 하니까 0이 나오면 fail to allocate new cluster인거다
+				//fat_remove_chain(allocate, 0);
+				free(disk_inode);
 				return false;
 			}
 
-			count--;
+			//FAT table안에서 빈 cluster들을 불러와서 파일 크기에 맞게 클러스터 체인을 만들어준다
+			//이때 실제 값들을 넣어주는게 아닌 흩어진 섹터들을 연결해주는 작업만 한다!
+			cluster_t new_clst;
+			count = sectors;
+			while (count > 0) {
+				new_clst = fat_create_chain(allocate);
+				if (new_clst == 0) {
+					//chain에 cluster를 추가하는게 실패한거니까 free하고 revmoe해줘야한다
+					fat_remove_chain(allocate, 0);
+					free(disk_inode);
+					return false;
+				}
+
+				allocate = new_clst;
+				count--;
+			}
+			//여기까지 나온거면 chain이 다 성공적으로 만들어진거니까 이때 처음 만든 sector를 start로 지정해준다
+			disk_inode->start = cluster_to_sector(allocate);
 		}
-		//여기까지 나온거면 chain이 다 성공적으로 만들어진거니까 이때 처음 만든 sector를 start로 지정해준다
-		disk_inode->start = cluster_to_sector(allocate);
 
 		//이제 FAT 테이블에서는 다음 클러스터 번호가 잘 적혀있을거다
 		//이제 또 하나하나씩 들어가서 disk_write을 호출해 클러스터에 해당 파일을 써줘야한다 
@@ -162,8 +173,9 @@ inode_create (disk_sector_t sector, off_t length) {
 			}
 			success = true; 
 		} 
-		#endif
+		
 		free (disk_inode);
+		#endif
 	}
 	return success;
 }
@@ -291,6 +303,7 @@ inode_read_at (struct inode *inode, void *buffer_, off_t size, off_t offset) {
 				if (bounce == NULL)
 					break;
 			}
+			//printf("sector index num: %d", sector_idx);
 			disk_read (filesys_disk, sector_idx, bounce);
 			memcpy (buffer + bytes_read, bounce + sector_ofs, chunk_size);
 		}
@@ -320,40 +333,56 @@ inode_write_at (struct inode *inode, const void *buffer_, off_t size,
 	if (inode->deny_write_cnt)
 		return 0;
 
+	disk_sector_t sector_idx = byte_to_sector (inode, offset + size);;
+	if (sector_idx == -1) {
+		//offset에 inode가 data를 가지고 있지 않은 경우이기 때문에 file을 늘려줘야한다
+		int position = offset + size;
+		//inode->data.length는 파일 사이즈 in bytes
+		int start = (inode->data.length + DISK_SECTOR_SIZE - 1) / (DISK_SECTOR_SIZE * SECTORS_PER_CLUSTER);
+		int end = (position + DISK_SECTOR_SIZE - 1) / (DISK_SECTOR_SIZE * SECTORS_PER_CLUSTER);
+		
+		cluster_t new_chain;
+		if (inode->data.length == 0) {
+			//file growth이 필요한거기 때문에 새로운 chain을 생성해줘야한다
+			new_chain = fat_create_chain(0);
+			if (new_chain == 0) {
+				//NOT_REACHED();
+				//chain이 만들어지지 않으면 file growth가 안되고 결국 실제로 데이터가 쓰여지지 않으니까 바로 0으로 반환시킨다
+				return 0;
+			} else {
+				//NOT_REACHED();
+				//inode에 정보를 업데이트 해줘야한다
+				inode->data.start = cluster_to_sector(new_chain);
+			}
+		} else {
+			//NOT_REACHED();
+			//이미 데이터 섹션이 있는 경우이기 때문에 그냥 체인을 연결해준다
+			new_chain = sector_to_cluster(inode->data.start);
+			cluster_t val = fat_get(new_chain);
+			while (val != EOChain) {
+				new_chain = fat_get(new_chain);
+			}
+		}
+		
+		//NOT_REACHED();
+		cluster_t chain = new_chain;
+		for (int i = start; i < end; i++) {
+			chain = fat_create_chain(chain);
+			if (chain == 0) {
+				// if (fat_get(new_chain) != EOChain)
+				// 	fat_remove_chain(fat_get(new_chain), new_chain);
+				return 0;
+			}
+		}
+		
+		//만약 여기까지 잘 나오면 chain이 우리가 원하는 만큼까지 커지는게 성공한거니까
+		//그럼 inode의 데이터에 length를 우리가 쓰고 싶었던 크기를 넣어주면 된다
+		inode->data.length = position;
+		disk_write(filesys_disk, inode->sector, &inode->data);
+	}
+
 	while (size > 0) {
 		/* Sector to write, starting byte offset within sector. */
-		disk_sector_t sector_idx = byte_to_sector (inode, offset + size);
-		if (sector_idx == -1) {
-			//offset에 inode가 data를 가지고 있지 않은 경우이기 때문에 file을 늘려줘야한다
-			int position = offset + size;
-			//inode->data.length는 파일 사이즈 in bytes
-			int start = (inode->data.length + DISK_SECTOR_SIZE - 1) / DISK_SECTOR_SIZE;
-			int end = (position + DISK_SECTOR_SIZE - 1) / DISK_SECTOR_SIZE;
-			
-			cluster_t new_chain;
-			if (inode->data.length == 0) {
-				//file growth이 필요한거기 때문에 새로운 chain을 생성해줘야한다
-				new_chain = fat_create_chain(0);
-				if (new_chain == 0) {
-					//chain이 만들어지지 않으면 file growth가 안되고 결국 실제로 데이터가 쓰여지지 않으니까 바로 0으로 반환시킨다
-					return 0;
-				} else {
-					//inode에 정보를 업데이트 해줘야한다
-					inode->data.start = cluster_to_sector(new_chain);
-				}
-			}
-			
-			cluster_t chain = new_chain;
-			for (int i = start; i < end; i++) {
-				chain = fat_create_chain(chain);
-				if (chain == 0) {
-					return 0;
-				}
-			}
-			//만약 여기까지 잘 나오면 chain이 우리가 원하는 만큼까지 커지는게 성공한거니까
-			//그럼 inode의 데이터에 length를 우리가 쓰고 싶었던 크기를 넣어주면 된다
-			inode->data.length = position;
-		}
 		sector_idx = byte_to_sector(inode, offset);
 		int sector_ofs = offset % DISK_SECTOR_SIZE;
 
