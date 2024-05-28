@@ -68,7 +68,7 @@ byte_to_sector (const struct inode *inode, off_t pos) {
 			}
 			pos_clst = clst;
 		}
-		return cluster_to_sector(pos_clst);
+		return cluster_to_sector(clst);
 	} else {
 		return -1;
 	}
@@ -98,10 +98,12 @@ inode_create (disk_sector_t sector, off_t length) {
 
 	/* If this assertion fails, the inode structure is not exactly
 	 * one sector in size, and you should fix that. */
+	printf("size of disk inode: %d", DISK_SECTOR_SIZE);
 	ASSERT (sizeof *disk_inode == DISK_SECTOR_SIZE);
 
-	//disk inode를 만들고
 	disk_inode = calloc (1, sizeof *disk_inode);
+
+	//disk inode를 만들고
 	if (disk_inode != NULL) {
 		size_t sectors = bytes_to_sectors (length);
 		disk_inode->length = length;
@@ -112,21 +114,23 @@ inode_create (disk_sector_t sector, off_t length) {
 		cluster_t allocate = fat_create_chain(0);
 		if (allocate == 0) {
 			//fat안에 0인 연속적인 free한 공간이 있어야 하니까 0이 나오면 fail to allocate new cluster인거다
-			free(disk_inode);
+			fat_remove_chain(allocate, 0);
 			return false;
 		}
 		//FAT table안에서 빈 cluster들을 불러와서 파일 크기에 맞게 클러스터 체인을 만들어준다
 		//이때 실제 값들을 넣어주는게 아닌 흩어진 섹터들을 연결해주는 작업만 한다!
 		cluster_t new_clst = allocate;
-		while (sectors > 0) {
+		size_t count = sectors;
+		while (count > 0) {
 			new_clst = fat_create_chain(new_clst);
 			if (new_clst == 0) {
 				//chain에 cluster를 추가하는게 실패한거니까 free하고 revmoe해줘야한다
 				fat_remove_chain(allocate, 0);
+				//free(disk_inode);
 				return false;
 			}
 
-			sectors--;
+			count--;
 		}
 		//여기까지 나온거면 chain이 다 성공적으로 만들어진거니까 이때 처음 만든 sector를 start로 지정해준다
 		disk_inode->start = cluster_to_sector(allocate);
@@ -137,10 +141,12 @@ inode_create (disk_sector_t sector, off_t length) {
 		if (sectors > 0) {
 			static char zeros[DISK_SECTOR_SIZE]; 
 			cluster_t for_write = allocate;
-			while (sectors > 0) {
+			while (count > 0) {
 				disk_write(filesys_disk, cluster_to_sector(for_write), zeros);
 				//FAT안에 다음 cluster의 위치가 담겨있기때문에 이렇게 다음 cluster를 찾는다
 				for_write = fat_get(for_write);
+
+				count--;
 			}
 		}
 		success = true;
@@ -187,12 +193,12 @@ inode_open (disk_sector_t sector) {
 		return NULL;
 
 	/* Initialize. */
-	list_push_front (&open_inodes, &inode->elem);
 	inode->sector = sector;
 	inode->open_cnt = 1;
 	inode->deny_write_cnt = 0;
 	inode->removed = false;
 	disk_read (filesys_disk, inode->sector, &inode->data);
+	list_push_front (&open_inodes, &inode->elem);
 	return inode;
 }
 

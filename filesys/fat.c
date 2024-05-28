@@ -157,7 +157,7 @@ fat_fs_init (void) {
 	//fat_length는 파일 시스템에 있는 총 cluster의 개수를 담고 있어야한다 (파일 시스템 자체가 FAT이다)
 	//cluster는 여러 sector들로 이루어져있다
 	struct fat_boot booting_info = fat_fs->bs;
-	fat_fs->fat_length = booting_info.total_sectors / SECTORS_PER_CLUSTER;
+	fat_fs->fat_length = booting_info.total_sectors - booting_info.fat_sectors - 1 / SECTORS_PER_CLUSTER;
 	//data_start은 어떤 sector에서부터 파일을 저장할 수 있는지를 알려준다
 	//실제 데이터 부분들은 fat table의 entries 뒤에 오기 때문에 fat가 시작한 지점에서 fat의 총 크기를 더하면 data의 시작점을 구할 수 있다
 	fat_fs->data_start = booting_info.fat_start + booting_info.fat_sectors;
@@ -170,10 +170,10 @@ fat_fs_init (void) {
 /* FAT handling                                                               */
 /*----------------------------------------------------------------------------*/
 
-cluster_t
+int
 get_free_cluster() {
-	cluster_t free_space = 0;
-	for (cluster_t entry = 1; entry < fat_fs->fat_length; entry++) {
+	int free_space = 0;
+	for (int entry = 1; entry < fat_fs->fat_length; entry++) {
 		if (fat_get(entry) == 0) {
 			//fat가 값이 0이면 free하다는 뜻이니까 이 처음 위치를 받아서 이걸 clst의 값으로 해서 연결시킨다
 			free_space = entry;
@@ -213,6 +213,8 @@ fat_create_chain (cluster_t clst) {
 		//여기서도 이 새롭게 추가해줄 cluster가 결국에 이 chain의 마지막 부분이 되는거니까 EOChain으로 세팅해야한다
 		fat_put(free_space, EOChain);
 	}
+	char zero_buf[DISK_SECTOR_SIZE] = {0};
+	disk_write(filesys_disk, cluster_to_sector(free_space), zero_buf);
 
 	return free_space;
 }
