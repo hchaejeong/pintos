@@ -23,5 +23,10 @@ off_t inode_length (const struct inode *);
 void create_directory_inode (struct inode *inode);
 void create_file_inode (struct inode *inode);
 bool inode_is_directory (const struct inode *inode);
+bool create_link_inode (disk_sector_t sector, char *target);
+bool check_symlink(struct inode *inode);
+char copy_inode_link (struct inode *inode, char *path);
+char inode_data_symlink_path (struct inode *inode);
+int length_symlink_path (struct inode *inode);
 
 #endif /* filesys/inode.h */
