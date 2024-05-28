@@ -70,17 +70,20 @@ filesys_create (const char *name, off_t initial_size) {
 	struct thread *current = thread_current();
 	//struct dir *directory = current->current_dir;
 	if (current->current_dir == NULL) {
+		//NOT_REACHED();
 		dir = dir_open_root();
 	} else {
 		dir = current->current_dir;
 	}
 	cluster_t clst = fat_create_chain(0);
-	// if (clst == 0) {
-	// 	dir_close(dir);
-	// }
+	if (clst == 0) {
+		fat_remove_chain(clst, 0);
+		return false;
+	}
+
 	inode_sector = cluster_to_sector(clst);
-	create_file_inode(inode_open(inode_sector));
-	bool success = (inode_create (inode_sector, initial_size)
+	//create_file_inode(inode_open(inode_sector));
+	bool success = (dir != NULL && inode_create (inode_sector, initial_size)
 			&& dir_add (dir, name, inode_sector));
 	//dir = directory;
 	#else
@@ -93,12 +96,12 @@ filesys_create (const char *name, off_t initial_size) {
 	if (!success && inode_sector != 0)
 		//여기를 Fat_remove_chain으로 바꿔야할듯?
 		#ifdef FILESYS
-			fat_remove_chain(inode_sector, 0);
+			fat_remove_chain(sector_to_cluster(inode_sector), 0);
 		#else
 			free_map_release (inode_sector, 1);
 		#endif
 	
-	dir_close (dir);
+	//dir_close (dir);
 
 	return success;
 }
@@ -110,7 +113,14 @@ filesys_create (const char *name, off_t initial_size) {
  * or if an internal memory allocation fails. */
 struct file *
 filesys_open (const char *name) {
-	struct dir *dir = dir_open_root ();
+	struct thread *curr = thread_current();
+	struct dir *dir;
+	if (curr->current_dir == NULL) {
+		dir = dir_open_root();
+	} else {
+		dir = curr->current_dir;
+	}
+	//struct dir *dir = dir_open_root ();
 	struct inode *inode = NULL;
 
 	if (dir != NULL)
@@ -126,7 +136,14 @@ filesys_open (const char *name) {
  * or if an internal memory allocation fails. */
 bool
 filesys_remove (const char *name) {
-	struct dir *dir = dir_open_root ();
+	struct thread *curr = thread_current();
+	struct dir *dir;
+	if (curr->current_dir == NULL) {
+		dir = dir_open_root();
+	} else {
+		dir = curr->current_dir;
+	}
+	//struct dir *dir = dir_open_root ();
 	bool success = dir != NULL && dir_remove (dir, name);
 	dir_close (dir);
 
