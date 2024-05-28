@@ -197,7 +197,10 @@ inode_open (disk_sector_t sector) {
 	inode->open_cnt = 1;
 	inode->deny_write_cnt = 0;
 	inode->removed = false;
+	/* 원래 코드
 	disk_read (filesys_disk, inode->sector, &inode->data);
+	*/
+	disk_read(filesys_disk, cluster_to_sector(inode->sector), &inode->data);
 	list_push_front (&open_inodes, &inode->elem);
 	return inode;
 }

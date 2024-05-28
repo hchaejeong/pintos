@@ -32,6 +32,8 @@ filesys_init (bool format) {
 		do_format ();
 
 	fat_open ();
+
+	thread_current()->current_dir = dir_open_root(); // root 정보를 기본적으로 깔고 감
 #else
 	/* Original FS */
 	free_map_init ();

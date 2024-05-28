@@ -651,7 +651,9 @@ process_exit (void) {
 	// 부모가 exit 할 때까지 기다린다
 	sema_down(&curr->sema_for_exit);
 
-	// proj3_hany setting을 위한
+	#ifdef FILESYS
+		dir_close(thread_current()->current_dir);
+	#endif
 }
 
 /* Free the current process's resources. */
