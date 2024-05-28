@@ -818,7 +818,8 @@ bool mkdir (const char *dir) {
 		bool is_inode_dir = inode_is_directory(inode);
 		if (!(success_lookup && is_inode_dir)) {
 			dir_close(real_dir);
-			inode_close(inode);
+			NOT_REACHED();
+			//inode_close(inode);
 			real_dir = NULL; // dir이 없는 거니까 dir은 null로 세팅해줘야
 			break;
 		} else {
