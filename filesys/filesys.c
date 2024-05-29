@@ -66,7 +66,7 @@ filesys_create (const char *name, off_t initial_size) {
 	disk_sector_t inode_sector = 0;
 	struct dir *dir;
 
-	#ifdef FILESYS
+	#ifdef EFILESYS
 	struct thread *current = thread_current();
 	//struct dir *directory = current->current_dir;
 	if (current->current_dir == NULL) {
@@ -95,13 +95,14 @@ filesys_create (const char *name, off_t initial_size) {
 	#endif
 	if (!success && inode_sector != 0)
 		//여기를 Fat_remove_chain으로 바꿔야할듯?
-		#ifdef FILESYS
+		#ifdef EFILESYS
 			fat_remove_chain(sector_to_cluster(inode_sector), 0);
 		#else
 			free_map_release (inode_sector, 1);
 		#endif
 	
 	//dir_close (dir);
+	create_file_inode(inode_open(inode_sector));
 
 	return success;
 }

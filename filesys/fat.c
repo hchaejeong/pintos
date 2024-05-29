@@ -170,13 +170,14 @@ fat_fs_init (void) {
 /* FAT handling                                                               */
 /*----------------------------------------------------------------------------*/
 
-int
+cluster_t
 get_free_cluster() {
-	int free_space = 0;
-	for (int entry = 1; entry < fat_fs->fat_length; entry++) {
+	cluster_t free_space = 0;
+	for (cluster_t entry = fat_fs->bs.root_dir_cluster + 1; entry < (cluster_t)fat_fs->fat_length; entry++) {
 		if (fat_get(entry) == 0) {
 			//fat가 값이 0이면 free하다는 뜻이니까 이 처음 위치를 받아서 이걸 clst의 값으로 해서 연결시킨다
 			free_space = entry;
+			break;
 		}
 	}
 
@@ -266,6 +267,7 @@ fat_get (cluster_t clst) {
 disk_sector_t
 cluster_to_sector (cluster_t clst) {
 	/* TODO: Your code goes here. */
+	ASSERT(clst > 0 && clst < fat_fs->fat_length);
 	return fat_fs->data_start + (clst - 1) * SECTORS_PER_CLUSTER;
 }
 
@@ -273,5 +275,5 @@ cluster_to_sector (cluster_t clst) {
 cluster_t
 sector_to_cluster (disk_sector_t sector) {
 	disk_sector_t difference = sector - fat_fs->data_start;
-	return difference / SECTORS_PER_CLUSTER + 1;
+	return difference + 1;
 }
