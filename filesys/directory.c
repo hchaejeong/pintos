@@ -23,7 +23,7 @@ struct dir_entry {
  * given SECTOR.  Returns true if successful, false on failure. */
 bool
 dir_create (disk_sector_t sector, size_t entry_cnt) {
-	bool created = inode_create (sector, entry_cnt * sizeof (struct dir_entry));
+	bool created = inode_create (sector, entry_cnt * sizeof (struct dir_entry), true);
 	if (created) {
 		struct inode *opened = inode_open(sector);
 		create_directory_inode(opened);
@@ -227,4 +227,12 @@ dir_readdir (struct dir *dir, char name[NAME_MAX + 1]) {
 		}
 	}
 	return false;
+}
+
+bool dir_pos (struct dir *dir) {
+	return dir->pos;
+}
+
+void dir_change_pos (struct dir *dir) {
+	dir->pos = 2*sizeof(struct dir_entry);
 }
