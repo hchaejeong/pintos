@@ -67,30 +67,48 @@ filesys_create (const char *name, off_t initial_size) {
 	struct dir *dir;
 
 	#ifdef EFILESYS
-	struct thread *current = thread_current();
-	//struct dir *directory = current->current_dir;
-	if (current->current_dir == NULL) {
-		//NOT_REACHED();
-		dir = dir_open_root();
-	} else {
-		dir = current->current_dir;
+
+	char *copy_name = (char*)malloc(strlen(name) + 1);
+	strlcpy(copy_name, name, strlen(name) + 1);
+
+	char *final_name = (char*)malloc(strlen(name) + 1);
+
+	dir = dir_open_root();
+	if (copy_name[0] != '/') {
+		dir = dir_reopen(thread_current()->current_dir);
 	}
+	dir = parsing(dir, copy_name, final_name);
+
+	// 여기서부터는 채정이가 쓴 것
 	cluster_t clst = fat_create_chain(0);
+	/*
 	if (clst == 0) {
 		fat_remove_chain(clst, 0);
 		return false;
 	}
+	*/
 
-	inode_sector = cluster_to_sector(clst);
+	//inode_sector = cluster_to_sector(clst);
 	//create_file_inode(inode_open(inode_sector));
-	bool success = (dir != NULL && inode_create (inode_sector, initial_size)
-			&& dir_add (dir, name, inode_sector));
+	bool success = (dir != NULL && inode_create (clst, initial_size, false)
+			&& dir_add (dir, name, clst));
 	//dir = directory;
+	// 이건 원래 적힌 filesys_create 함수처럼 해주면 됨
+	if (!success && clst != 0) {
+		fat_remove_chain(clst, 0);
+	}
+
+	free(copy_name);
+	free(final_name);
+	dir_close(dir);
+
+	return success;
+
 	#else
 	struct dir *dir = dir_open_root ();
 	bool success = (dir != NULL
 			&& free_map_allocate (1, &inode_sector)
-			&& inode_create (inode_sector, initial_size)
+			&& inode_create (inode_sector, initial_size, false)
 			&& dir_add (dir, name, inode_sector));
 	#endif
 	if (!success && inode_sector != 0)
@@ -114,7 +132,7 @@ filesys_create (const char *name, off_t initial_size) {
  * or if an internal memory allocation fails. */
 struct file *
 filesys_open (const char *name) {
-	#ifdef FILESYS
+	#ifdef EFILESYS
 		
 		char *copy_name = (char*)malloc(strlen(name) + 1);
 		strlcpy(copy_name, name, strlen(name) + 1);
@@ -131,6 +149,23 @@ filesys_open (const char *name) {
 		dir = parsing(dir, copy_name, final_name);
 		if (dir != NULL) {
 			dir_lookup(dir, final_name, &inode);
+			if ((inode != NULL) && check_symlink(inode)) {
+				dir_close(dir);
+				// 만약에 symlink file이면, name을 symlink_path로 바꿔줘야 함
+				char *link_name = (char*)malloc(length_symlink_path(inode));
+				strlcpy(link_name, inode_data_symlink_path(inode), length_symlink_path(inode));
+				dir = dir_open_root();
+				if (link_name[0] != '/') {
+					dir = dir_reopen(thread_current()->current_dir);
+				}
+				char *link_final_name = (char*)malloc(length_symlink_path(inode));
+				dir = parsing(dir, link_name, link_final_name);
+				if (dir != NULL) {
+					dir_lookup(dir, link_final_name, &inode);
+				}
+				free(link_name);
+				free(link_final_name);
+			}
 		}
 		free(copy_name);
 		free(final_name);
@@ -165,18 +200,76 @@ filesys_open (const char *name) {
  * or if an internal memory allocation fails. */
 bool
 filesys_remove (const char *name) {
-	struct thread *curr = thread_current();
-	struct dir *dir;
-	if (curr->current_dir == NULL) {
-		dir = dir_open_root();
-	} else {
-		dir = curr->current_dir;
-	}
-	//struct dir *dir = dir_open_root ();
-	bool success = dir != NULL && dir_remove (dir, name);
-	dir_close (dir);
+	#ifdef EFILESYS
+		char *copy_name = (char*)malloc(strlen(name) + 1);
+		strlcpy(copy_name, name, strlen(name) + 1);
 
-	return success;
+		char *final_name = (char*)malloc(strlen(name) + 1);
+
+		struct inode *inode = NULL;
+
+		bool ret = false;
+
+		// 여기는 chdir과 같음. 경로 초기 세팅
+		struct dir *dir = dir_open_root(); // 일단 기본이 되는 root 경로로 열어두고 시작
+		if (copy_name[0] != '/') {
+			dir = dir_reopen(thread_current()->current_dir);
+		}
+		dir = parsing(dir, copy_name, final_name);
+
+		if (dir != NULL) {
+			dir_lookup(dir, final_name, &inode);
+			
+			//filesys_remove에서는, dir인 경우와 file인 경우로 나눠서 처리해줘야 함
+			if (inode_is_directory(inode)) {
+				// dir인 경우!
+				struct dir *dir_now = dir_open(inode);
+				dir_change_pos(dir_now);
+
+				char *empty_name = (char *)malloc(NAME_MAX + 1);
+				if (dir_readdir(dir_now, empty_name)) {
+					// dir이 비지 않은 경우 (name이 찼다!)
+					// 그러면 파일을 지우면 됨!
+					ret = dir_remove(dir_now, final_name);
+				} else {
+					// dir이 빈 경우
+					// 지금 이 dir에 current thread가 접속해있으면 지우면 안됨.
+					// 그게 아니라면 지워야함 ㅇㅇ
+					struct inode *current_inode = dir_get_inode(thread_current()->current_dir);
+					struct inode *dir_now_inode = dir_get_inode(dir_now);
+					if (inode_get_inumber(current_inode) != inode_get_inumber(dir_now_inode)) {
+						ret = dir_remove(dir, final_name);
+					}
+				}
+				dir_close(dir_now);
+				free(empty_name);
+			} else {
+				// file인 경우! 파일만 잘 닫으면 됨~
+				inode_close(inode);
+				ret = dir_remove(dir, final_name);
+			}
+		}
+
+		free(copy_name);
+		free(final_name);
+		dir_close(dir);
+
+		return ret;
+
+	#else
+		struct thread *curr = thread_current();
+		struct dir *dir;
+		if (curr->current_dir == NULL) {
+			dir = dir_open_root();
+		} else {
+			dir = curr->current_dir;
+		}
+		//struct dir *dir = dir_open_root ();
+		bool success = dir != NULL && dir_remove (dir, name);
+		dir_close (dir);
+
+		return success;
+	#endif
 }
 
 /* Formats the file system. */

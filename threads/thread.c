@@ -290,15 +290,14 @@ thread_create (const char *name, int priority,
 	// printf("new thread name: %s\n", &t->name);
 	// list_push_back(&thread_current()->my_child, &t->my_child_elem);
 	
+	/*
 	// 새로 만들 때 부모의 dir을 일단 그대로 가져와야함
 	t->current_dir = thread_current()->current_dir;
-	/*
-	if (thread_current()->current_dir == NULL) {
-		t->current_dir = dir_open_root();
-	} else {
+	*/
+
+	if (thread_current()->current_dir != NULL) {
 		t->current_dir = dir_reopen(thread_current()->current_dir);
 	}
-	*/
 
 	return tid;
 }

@@ -917,6 +917,9 @@ bool readdir (int fd, char *name) {
 	
 	if (check) {
 		struct dir *file_pointer = file; // file을 가리키는 pointer을 dir 형태로 저장
+		if (dir_pos(file_pointer) == 0) {
+			dir_change_pos(file_pointer);
+		}
 		return dir_readdir(file_pointer, name);
 	} else {
 		return false;
