@@ -115,7 +115,7 @@ inode_create (disk_sector_t sector, off_t length) {
 		disk_inode->length = length;
 		disk_inode->magic = INODE_MAGIC;
 		
-		#if FILESYS
+		#ifdef EFILESYS
 		//새로운 chain을 만들어줘야하니까 0으로 입력해서 new chain이 allocate가 되는지 보고 (free한 공간 충분)
 		cluster_t allocate;
 		size_t count;
@@ -246,6 +246,9 @@ inode_close (struct inode *inode) {
 	if (inode == NULL)
 		return;
 
+	#ifdef EFILESYS
+		disk_write (filesys_disk, inode->sector, &inode->data);
+	#endif
 	/* Release resources if this was the last opener. */
 	if (--inode->open_cnt == 0) {
 		/* Remove from inode list and release lock. */
@@ -253,7 +256,7 @@ inode_close (struct inode *inode) {
 
 		/* Deallocate blocks if removed. */
 		if (inode->removed) {
-			#ifdef FILESYS
+			#ifdef EFILESYS
 				fat_remove_chain(sector_to_cluster(inode->sector), 0);
 			#else
 				free_map_release (inode->sector, 1);

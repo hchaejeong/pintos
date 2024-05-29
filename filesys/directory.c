@@ -51,7 +51,7 @@ dir_open (struct inode *inode) {
  * Return true if successful, false on failure. */
 struct dir *
 dir_open_root (void) {
-	#ifdef FILESYS
+	#ifdef EFILESYS
 		return dir_open(inode_open(cluster_to_sector(ROOT_DIR_SECTOR)));
 	#else
 		return dir_open (inode_open (ROOT_DIR_SECTOR));
