@@ -33,6 +33,7 @@ filesys_init (bool format) {
 
 	fat_open ();
 
+	// printf("(filesys_init)\n");
 	thread_current()->current_dir = dir_open_root(); // root 정보를 기본적으로 깔고 감
 #else
 	/* Original FS */
@@ -66,35 +67,46 @@ filesys_create (const char *name, off_t initial_size) {
 	disk_sector_t inode_sector = 0;
 	struct dir *dir;
 
+	// printf("(filesys_create) 여기까지는 ㄱㅊ음?\n");
 	#ifdef EFILESYS
 
+	// printf("(filesys_create) EFILESYS로 들어가나?\n"); // ㅇㅇ 여기로 들어감
 	char *copy_name = (char*)malloc(strlen(name) + 1);
 	strlcpy(copy_name, name, strlen(name) + 1);
 
 	char *final_name = (char*)malloc(strlen(name) + 1);
 
+	// printf("(filesys_create) name[0]: %c\n", name[0]);
+	// printf("(filesys_create) copy_name[0]: %c\n", copy_name[0]);
 	dir = dir_open_root();
 	if (copy_name[0] != '/') {
+		// printf("(filesys_create) cur thread dir: %d\n", thread_current()->current_dir != NULL);
 		dir = dir_reopen(thread_current()->current_dir);
+		// printf("(filesys_create) dir: %d\n", dir != NULL);
 	}
 	dir = parsing(dir, copy_name, final_name);
+	// printf("(filesys_create) final_name after parsing: %s\n", final_name);
 
+	// printf("(filesys_create) 3 어디가 문제야?\n"); // parsing이 문제다!
 	// 여기서부터는 채정이가 쓴 것
 	cluster_t clst = fat_create_chain(0);
-	/*
-	if (clst == 0) {
-		fat_remove_chain(clst, 0);
-		return false;
-	}
-	*/
+	
+	// if (clst == 0) {
+	// 	fat_remove_chain(clst, 0);
+	// 	return false;
+	// }
+	
 
 	//inode_sector = cluster_to_sector(clst);
 	//create_file_inode(inode_open(inode_sector));
+	// printf("(filesys_create) dir != NULL: %d\n", dir != NULL);
 	bool success = (dir != NULL && inode_create (clst, initial_size, false)
 			&& dir_add (dir, name, clst));
 	//dir = directory;
 	// 이건 원래 적힌 filesys_create 함수처럼 해주면 됨
 	if (!success && clst != 0) {
+		// printf("(filesys_create) success: %d\n", success); // 얘가 0이다. 뭐가 문제였을까
+		// printf("(filesys_create) clst != 0: %d\n", clst != 0);
 		fat_remove_chain(clst, 0);
 	}
 
@@ -279,7 +291,16 @@ do_format (void) {
 
 #ifdef EFILESYS
 	/* Create FAT and save it to the disk. */
+	// printf("\n(do_format)\n"); // 여기서 dir_create를 해줘야 하는데 으악 이걸 안해줬나봄.
 	fat_create ();
+
+	dir_create(cluster_to_sector(ROOT_DIR_CLUSTER), 16);
+	struct dir *dir = dir_open_root();
+	// printf("(do_format) dir_get_inode(dir): %d\n", inode_get_inumber(dir_get_inode(dir)));
+	dir_add(dir, ".", inode_get_inumber(dir_get_inode(dir)));
+	dir_add(dir, "..", inode_get_inumber(dir_get_inode(dir)));
+	dir_close(dir);
+
 	fat_close ();
 #else
 	free_map_create ();
@@ -297,18 +318,46 @@ struct dir *parsing(struct dir *dir, char *path, char *final_name) {
 		return NULL;
 	}
 
+	// printf("path: %s\n", path);
+	// printf("final_name: %d\n", final_name); // 이건 비어있어야 한다 -> 이상한 문자로..?
+	// printf("1 parsing이 문제였어\n");
 	char *save;
 	char *path_token = strtok_r(path, "/", &save);
 	struct inode *inode = NULL;
+	// printf("path_token: %s\n", path_token);
+	// printf("save: %s\n", save);
 
 	if (path_token == NULL) {
 		strlcpy(final_name, ".", 2); // "/"인 경우에는, file_name은 .이 되어야 함
 	}
+
+	// next_path == NULL인 경우도!! 그냥 return해야함!! dir 상관없이!!
+	char *next_path = strtok_r(NULL, "/", &save);
+	// printf("(parsing) next_path == NULL: %d\n", next_path == NULL);
 	
 	// 여기서의 목적은 file_name만 parsing 해내는 것!
 	while (path_token != NULL) {
+		if (next_path == NULL) {
+			// 하... 이걸 왜 생각 못했을까. dir은 lookup하기 전에 원래 상태 그대로 반환해야함.
+			break;
+		}
+
 		bool success_lookup = dir_lookup(dir, path_token, &inode);
-		bool is_inode_dir = inode_is_directory(inode);
+		// printf("inode == NULL: %d\n", inode == NULL);
+		// printf("success_lookup: %d\n", success_lookup); // false가 나옴. lookup이 실패했다는 뜻
+		if (success_lookup == false) {
+			// 따라서, 뒤에서 한 번에 if를 돌려주는게 아니라
+			// inode_is_directory 함수 자체가 오류가 나 버리니,
+			// 여기서 바로 dir = NULL을 해줘야 한다
+			dir_close(dir);
+			dir = NULL;
+			break;
+		}
+
+		bool is_inode_dir = inode_is_directory(inode); // 와 이게 문제였다.
+		// inode 자체가 NULL인걸로 dir_lookup에서 나와버렸는데, 그 inode를 가지고
+		// inode_is_directory를 실행하려니까 오류가 걸린 것이다.
+		// printf("is_inode_dir: %d\n", is_inode_dir);
 		if (!(success_lookup && is_inode_dir)) {
 			dir_close(dir);
 			inode_close(inode);
@@ -344,16 +393,22 @@ struct dir *parsing(struct dir *dir, char *path, char *final_name) {
 			dir_close(dir);
 			dir = dir_open(inode);
 			// 근데 여기서, 경로의 마지막은 file의 이름이므로 그걸 저장해야함
-			char *check_next = strtok_r(NULL, "/", &save);
-			if (check_next == NULL) {
+			//char *check_next = strtok_r(NULL, "/", &save);
+			// 위의 next_path가 이 역할을 함
+			//if (check_next == NULL) {
+			if (next_path == NULL) {
 				// file_name에 file name 복사해두기!
-				strlcpy(final_name, path_token, strlen(path_token) + 1);
+				//strlcpy(final_name, path_token, strlen(path_token) + 1);
 				break;
 			} else {
-				path_token = final_name;
+				path_token = next_path;
+				next_path = strtok_r(NULL, "/", &save);
 			}
 		}
 	}
+	// return하기 전에, 여기서 final_name을 copy 해줘야 한다.
+	// inode가 없는 것과는 별개로 
+	strlcpy(final_name, path_token, strlen(path_token) + 1);
 
 	return dir;
 }

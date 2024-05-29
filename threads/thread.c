@@ -137,6 +137,10 @@ thread_init (void) {
 	//wakeup_tick attribute를 초기화 해줘야하나...?
 	initial_thread->status = THREAD_RUNNING;
 	initial_thread->tid = allocate_tid ();
+
+	#ifdef EFILESYS
+		initial_thread->current_dir = NULL;
+	#endif
 }
 
 /* Starts preemptive thread scheduling by enabling interrupts.
@@ -296,6 +300,7 @@ thread_create (const char *name, int priority,
 	*/
 
 	if (thread_current()->current_dir != NULL) {
+		printf("(thread_create) cur dir != NULL?\n");
 		t->current_dir = dir_reopen(thread_current()->current_dir);
 	}
 
@@ -918,7 +923,7 @@ init_thread (struct thread *t, const char *name, int priority) {
 		t->user_stack_rsp = 0;
 	#endif
 
-	t->current_dir = NULL; // current dir 초기화
+	//t->current_dir = NULL; // current dir 초기화
 }
 
 /* Chooses and returns the next thread to be scheduled.  Should
