@@ -52,6 +52,7 @@ bool mkdir (const char *dir);
 bool readdir (int fd, char *name);
 bool isdir (int fd);
 int inumber (int fd);
+int symlink (const char *target, const char *linkpath);
 
 /* System call.
  *
@@ -175,6 +176,8 @@ syscall_handler (struct intr_frame *f UNUSED) {
 		case (SYS_INUMBER):
 			f->R.rax = inumber((int) f->R.rdi);
 			break;
+		case (SYS_SYMLINK):
+			f->R.rax = symlink((const char *) f->R.rdi, (const char *) f->R.rsi);
 		default:
 			printf ("system call!\n");
 			thread_exit ();
@@ -808,8 +811,6 @@ bool mkdir (const char *dir) {
 	if (dir_token == NULL) {
 		strlcpy(file_name, ".", 2); // "/"인 경우에는, file_name은 .이 되어야 함
 	}
-
-	// 링크 파일인 경우는 앞서서 한 번 더 돌리면 될 것 같음
 	
 	// 여기서의 목적은 file_name만 parsing 해내는 것!
 	while (dir_token != NULL) {
@@ -822,6 +823,32 @@ bool mkdir (const char *dir) {
 			real_dir = NULL; // dir이 없는 거니까 dir은 null로 세팅해줘야
 			break;
 		} else {
+			// 링크 파일인 경우는 앞서서 한 번 더 돌리면 될 것 같음
+			if (check_symlink(inode)) {
+				// 아니 대체 왜 inode->data.symlink가 안되는건데 ㅋㅋ
+				// inode의 path를 복사해온다!
+				char *inode_path = (char*)malloc(sizeof(length_symlink_path(inode)));
+				strlcpy(inode_path, inode_data_symlink_path(inode), length_symlink_path(inode));
+				
+				// inode path 경로에 symlink 뒷부분을 갖다붙이면 됨
+				// ../file 이런 식으로 되어있던 걸 inode path/file 이런 형식으로!
+				strlcat(inode_path, "/", strlen(inode_path) + 2);
+				strlcat(inode_path, save, strlen(inode_path) + strlen(save) + 1);
+
+				dir_close(real_dir);
+
+				// 그리고 while문 다시 시작해야함!
+				real_dir = dir_open_root();
+				if (dir[0] != '/') {
+					real_dir = dir_reopen(thread_current()->current_dir);
+				}
+				strlcpy(copy_dir, inode_path, strlen(inode_path) + 1);
+				free(inode_path);
+				dir_token = strtok_r(copy_dir, "/", &save);
+				continue;
+			}
+
+
 			dir_close(real_dir);
 			real_dir = dir_open(inode);
 			// 근데 여기서, 경로의 마지막은 file의 이름이므로 그걸 저장해야함
@@ -927,4 +954,121 @@ int inumber (int fd) {
 			return inode_get_inumber(file_get_inode(file));
 		}
 	}
+}
+
+int symlink (const char *target, const char *linkpath) {
+	/* soft link임.
+	다른 file 또는 directory를 참조하는 pseudo file 개체임.
+	/
+	├── a
+	│   ├── link1 -> /file
+	│   │
+	│   └── link2 -> ../file
+	└── file
+	여기서 link1은 절대 경로이고 link2는 상대 경로이며,
+	link1과 link2 모두 /file을 읽는 것과 같음 */
+
+	
+	// mkdir에서 썼던 parsing 코드를 들고와야함
+
+	if (linkpath == NULL || strlen(linkpath) == 0) {
+		return false;
+	}
+	
+	struct dir *real_dir = dir_open_root();
+	if (linkpath[0] != '/') {
+		real_dir = dir_reopen(thread_current()->current_dir);
+	}
+
+	char *copy_linkpath = (char *)malloc((strlen(linkpath)+1) * sizeof(char));
+	strlcpy(copy_linkpath, linkpath, strlen(linkpath) + 1);
+
+	char *save;
+	char *linkpath_token = strtok_r(copy_linkpath, "/", &save);
+	struct inode *inode = NULL;
+
+	char *file_name = (char *)malloc((strlen(linkpath)+1) * sizeof(char));
+	if (linkpath_token == NULL) {
+		strlcpy(file_name, ".", 2);
+	}
+
+	// 링크 파일인 경우는 앞서서 한 번 더 돌리면 될 것 같음
+	
+	// 여기서의 목적은 file_name만 parsing 해내는 것!
+	while (linkpath_token != NULL) {
+		bool success_lookup = dir_lookup(real_dir, linkpath_token, &inode);
+		bool is_inode_dir = inode_is_directory(inode);
+		if (!(success_lookup && is_inode_dir)) {
+			dir_close(real_dir);
+			inode_close(inode);
+			real_dir = NULL;
+			break;
+		} else {
+			// 링크 파일인 경우는 앞서서 한 번 더 돌리면 될 것 같음
+			if (check_symlink(inode)) {
+				// 아니 대체 왜 inode->data.symlink가 안되는건데 ㅋㅋ
+				// inode의 path를 복사해온다!
+				char *inode_path = (char*)malloc(sizeof(length_symlink_path(inode)));
+				strlcpy(inode_path, inode_data_symlink_path(inode), length_symlink_path(inode));
+				
+				// inode path 경로에 symlink 뒷부분을 갖다붙이면 됨
+				// ../file 이런 식으로 되어있던 걸 inode path/file 이런 형식으로!
+				strlcat(inode_path, "/", strlen(inode_path) + 2);
+				strlcat(inode_path, save, strlen(inode_path) + strlen(save) + 1);
+
+				dir_close(real_dir);
+				
+				// 그리고 while문 다시 시작해야함!
+				real_dir = dir_open_root();
+				if (linkpath[0] != '/') {
+					real_dir = dir_reopen(thread_current()->current_dir);
+				}
+				strlcpy(copy_linkpath, inode_path, strlen(inode_path) + 1);
+				free(inode_path);
+				linkpath_token = strtok_r(copy_linkpath, "/", &save);
+				continue;
+			}
+
+			dir_close(real_dir);
+			real_dir = dir_open(inode);
+			// 근데 여기서, 경로의 마지막은 file의 이름이므로 그걸 저장해야함
+			char *check_next = strtok_r(NULL, "/", &save);
+			if (check_next == NULL) {
+				// file_name에 file name 복사해두기!
+				strlcpy(file_name, linkpath_token, strlen(linkpath_token) + 1);
+				break;
+			} else {
+				linkpath_token = file_name;
+			}
+		}
+	}
+
+	// 새로운 chain을 만들어서 inode sector 번호를 받아야 함
+	cluster_t inode_sector_num = fat_create_chain(0);
+
+	// dir이 NULL이면 당연히 error
+	if (real_dir == NULL) { goto error; }
+	
+	// 이렇게 만들어진 sector에 위에서 받은 file_name의 dir을 만들어야 함. 안 만들어지면 당연히 error
+	bool link_inode = create_link_inode(inode_sector_num, 16);
+	if (!link_inode) { goto error; }
+
+	// dir에 file_name entry를 추가해줘야 함. 잘 안되면 당연히 goto error
+	bool add_file_name = dir_add(real_dir, file_name, inode_sector_num);
+	if (!add_file_name) { goto error; }
+
+	dir_close(real_dir);
+	free(copy_linkpath);
+	free(file_name);
+
+	return 0; // 성공하면 0 반환
+error:
+	if (inode_sector_num != 0) {
+		fat_remove_chain(inode_sector_num, 0);
+	}
+	dir_close(real_dir);
+	free(copy_linkpath);
+	free(file_name);
+
+	return -1; // 실패하면 -1 반환
 }

@@ -17,8 +17,14 @@ struct inode_disk {
 	disk_sector_t start;                /* First data sector. */
 	off_t length;                       /* File size in bytes. */
 	unsigned magic;                     /* Magic number. */
-	uint32_t unused[124];               /* Not used. */
+	// uint32_t unused[125];               /* Not used. */
 	bool directory;			//이 Inode가 파일인지 디렉토리인지
+	bool symlink; 			// 이 inode가 link file인지
+	// disk_sector_t & off_t & unsigned 모두 4바이트
+	// unused는 그냥 안쓰이니까 제외 (처음부터 DISK_SECTOR_SIZE 맞춰주려고 넣은 듯)
+	// bool은 1바이트 => DISK_SECTOR_SIZE = 512바이트이므로
+	// 512-4-4-4-1-1 = 498
+	char symlink_path[498];
 };
 
 /* Returns the number of sectors to allocate for an inode SIZE
@@ -471,4 +477,54 @@ create_file_inode (struct inode *inode) {
 bool
 inode_is_directory (const struct inode *inode) {
 	return inode->data.directory;
+}
+
+bool
+create_link_inode (disk_sector_t sector, char *target) {
+
+	struct inode_disk *disk_for_inode = NULL;
+	disk_for_inode = calloc(1, sizeof *disk_for_inode);
+	
+	// calloc으로 0으로 채워줬으면 이제 NULL이 아닐 것임
+	ASSERT(disk_for_inode != NULL);
+
+	disk_for_inode->length = strlen(target) + 1;
+	disk_for_inode->magic = INODE_MAGIC;
+	disk_for_inode->directory = false;
+	disk_for_inode->symlink = true;
+	strlcpy(disk_for_inode->symlink_path, target, strlen(target) + 1);
+
+	cluster_t inode_cluster = fat_create_chain(0);
+	if (inode_cluster == 0) {
+		// 위에 채정이가 inode_create에 적어둔 것처럼 0이면 안만들어졌다는 뜻
+		free(disk_for_inode);
+		return false;
+	}
+	// chain이 잘 만들어졌으면,
+	disk_for_inode->start = inode_cluster;
+	disk_write(filesys_disk, cluster_to_sector(inode_cluster), disk_for_inode);
+
+	return true;
+}
+
+bool check_symlink(struct inode *inode) {
+	// 아니 왜 syscall.c에서 inode->data 이게 안됨 에러가 뜸 그래서 여기에다가...
+	return inode->data.symlink;
+}
+
+char copy_inode_link (struct inode *inode, char *path) {
+	char *inode_link = (char*)malloc(sizeof(strlen(inode->data.symlink_path)) + 1);
+	strlcpy(inode_link, inode->data.symlink_path, strlen(inode->data.symlink_path) + 1);
+	strlcpy(path, inode_link, strlen(inode_link) + 1);
+	free(inode_link);
+
+	return path;
+}
+
+char inode_data_symlink_path (struct inode *inode) {
+	return inode->data.symlink_path;
+}
+
+int length_symlink_path (struct inode *inode) {
+	return strlen(inode->data.symlink_path) + 1;
 }
