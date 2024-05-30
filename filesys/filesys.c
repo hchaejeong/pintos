@@ -81,12 +81,12 @@ filesys_create (const char *name, off_t initial_size) {
 
 	// 여기서부터는 채정이가 쓴 것
 	cluster_t clst = fat_create_chain(0);
-	/*
+	
 	if (clst == 0) {
 		fat_remove_chain(clst, 0);
 		return false;
 	}
-	*/
+	
 
 	//inode_sector = cluster_to_sector(clst);
 	//create_file_inode(inode_open(inode_sector));
