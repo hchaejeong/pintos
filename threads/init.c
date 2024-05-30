@@ -98,6 +98,7 @@ main (void) {
 	kbd_init ();
 	input_init ();
 #ifdef USERPROG
+	// printf("(main) #ifdef userprog도 들어가나?\n");
 	exception_init ();
 	syscall_init ();
 #endif

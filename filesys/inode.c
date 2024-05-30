@@ -51,6 +51,7 @@ struct inode {
  * POS. */
 static disk_sector_t
 byte_to_sector (const struct inode *inode, off_t pos) {
+	// printf("(byte_to_sector)\n");
 	//해당 inode를 갖고 있는 sector를 반환하는 함수이다
 	//파일은 하나 이상의 섹터에 쪼개져서 저장될 것
 	ASSERT (inode != NULL);
@@ -75,6 +76,7 @@ byte_to_sector (const struct inode *inode, off_t pos) {
 			pos_clst = clst;
 		}
 		return cluster_to_sector(pos_clst);
+		//return cluster_to_sector(clst);
 	} else {
 		return -1;
 	}
@@ -168,6 +170,7 @@ inode_create (disk_sector_t sector, off_t length, bool directory) {
 			}
 		}
 		success = true;
+		// printf("(inode_create)\n");
 		#else
 		if (free_map_allocate (sectors, &disk_inode->start)) {
 			disk_write (filesys_disk, sector, disk_inode);
@@ -201,7 +204,9 @@ inode_open (disk_sector_t sector) {
 			e = list_next (e)) {
 		inode = list_entry (e, struct inode, elem);
 		if (inode->sector == sector) {
+			//printf("여기 들어가?\n");
 			inode_reopen (inode);
+			//printf("inode != NULL? %d\n", inode != NULL);
 			return inode; 
 		}
 	}
@@ -217,9 +222,9 @@ inode_open (disk_sector_t sector) {
 	inode->deny_write_cnt = 0;
 	inode->removed = false;
 	
-	//disk_read (filesys_disk, inode->sector, &inode->data);
+	disk_read (filesys_disk, inode->sector, &inode->data);
 	
-	disk_read(filesys_disk, cluster_to_sector(inode->sector), &inode->data);
+	//disk_read(filesys_disk, cluster_to_sector(inode->sector), &inode->data);
 	list_push_front (&open_inodes, &inode->elem);
 	return inode;
 }
@@ -227,6 +232,7 @@ inode_open (disk_sector_t sector) {
 /* Reopens and returns INODE. */
 struct inode *
 inode_reopen (struct inode *inode) {
+	// printf("(inode_reopen) inode != NULL : %d\n", inode != NULL);
 	if (inode != NULL)
 		inode->open_cnt++;
 	return inode;
@@ -339,6 +345,9 @@ inode_write_at (struct inode *inode, const void *buffer_, off_t size,
 	const uint8_t *buffer = buffer_;
 	off_t bytes_written = 0;
 	uint8_t *bounce = NULL;
+
+	// printf("(inode_write_at) inode->data.length: %d\n", inode->data.length);
+	// printf("(inode_write_at) size + offset: %d\n", size+offset);
 
 	if (inode->deny_write_cnt)
 		return 0;
