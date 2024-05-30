@@ -300,7 +300,7 @@ thread_create (const char *name, int priority,
 	*/
 
 	if (thread_current()->current_dir != NULL) {
-		printf("(thread_create) cur dir != NULL?\n");
+		//printf("(thread_create) cur dir != NULL?\n");
 		t->current_dir = dir_reopen(thread_current()->current_dir);
 	}
 

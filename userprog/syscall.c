@@ -781,7 +781,7 @@ bool chdir (const char *dir) {
 }
 
 bool mkdir (const char *dir) {
-	printf("(mkdir)\n");
+	//printf("(mkdir)\n");
 	/* 상대적, 절대적 모두 가능한 dir이라는 directory를 만듦.
 	성공하면 true, 실패하면 false 반환.
 	dir이 이미 존재하거나 & 그 앞의 경로가 없는 경우에는 false

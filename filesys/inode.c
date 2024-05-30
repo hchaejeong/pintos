@@ -66,14 +66,17 @@ byte_to_sector (const struct inode *inode, off_t pos) {
 	if (pos < inode->data.length) {
 		//현재 inode가 들어있는 섹터를 가져온다
 		cluster_t pos_clst = sector_to_cluster(inode->data.start);
-		cluster_t clst;
+		//cluster_t clst;
 		//이제 해당 offset pos을 가진 위치로 가서 거기에 담겨있는 value를 찾고 섹터값으로 변환해줘야한다 
 		for (int i = 0; i < (pos / DISK_SECTOR_SIZE); i++) {
-			clst = fat_get(pos_clst);
-			if (clst == 0) {
-				return -1;
-			}
-			pos_clst = clst;
+			pos_clst = fat_get(pos_clst);
+			// if (clst == 0) {
+			// 	return -1;
+			// }
+			//pos_clst = clst;
+		}
+		if (pos_clst == EOChain) {
+			return -1;
 		}
 		return cluster_to_sector(pos_clst);
 		//return cluster_to_sector(clst);
@@ -377,8 +380,8 @@ inode_write_at (struct inode *inode, const void *buffer_, off_t size,
 			//NOT_REACHED();
 			//이미 데이터 섹션이 있는 경우이기 때문에 그냥 체인을 연결해준다
 			new_chain = sector_to_cluster(inode->data.start);
-			cluster_t val = fat_get(new_chain);
-			while (val != EOChain) {
+			//cluster_t val = fat_get(new_chain);
+			while (fat_get(new_chain) != EOChain) {
 				new_chain = fat_get(new_chain);
 			}
 		}
