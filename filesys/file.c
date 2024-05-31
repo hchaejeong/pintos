@@ -159,3 +159,7 @@ file_tell (struct file *file) {
 	ASSERT (file != NULL);
 	return file->pos;
 }
+
+struct inode *get_file_inode (struct file *file) {
+	return file->inode;
+}

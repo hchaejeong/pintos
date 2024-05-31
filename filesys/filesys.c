@@ -78,13 +78,17 @@ filesys_create (const char *name, off_t initial_size) {
 
 	// printf("(filesys_create) name[0]: %c\n", name[0]);
 	// printf("(filesys_create) copy_name[0]: %c\n", copy_name[0]);
+	// printf("(filesys_create) copy_name: %s\n", copy_name);
 	dir = dir_open_root();
 	if (copy_name[0] != '/') {
 		// printf("(filesys_create) cur thread dir: %d\n", thread_current()->current_dir != NULL);
 		dir = dir_reopen(thread_current()->current_dir);
 		// printf("(filesys_create) dir: %d\n", dir != NULL);
 	}
+	// printf("(filesys_create) dir before parsing: 0x%x\n", dir);
 	dir = parsing(dir, copy_name, final_name);
+	// printf("(filesys_create) dir after parsing: 0x%x\n", dir);
+	// printf("(filesys_create) copy_name after parsing: %s\n", copy_name);
 	// printf("(filesys_create) final_name after parsing: %s\n", final_name);
 
 	// printf("(filesys_create) 3 어디가 문제야?\n"); // parsing이 문제다!
@@ -100,8 +104,11 @@ filesys_create (const char *name, off_t initial_size) {
 	//inode_sector = cluster_to_sector(clst);
 	//create_file_inode(inode_open(inode_sector));
 	// printf("(filesys_create) dir != NULL: %d\n", dir != NULL);
-	bool success = (dir != NULL && inode_create (clst, initial_size, false)
-			&& dir_add (dir, name, clst));
+	bool success = (dir != NULL && inode_create (cluster_to_sector(clst), initial_size, false)
+			&& dir_add (dir, final_name, cluster_to_sector(clst)));
+	// 와 ㅋㅋㅋㅋㅋㅋㅋㅋㅋㅋ
+	// dir_add (dir, name, cluster_to_sector(clst))); 이라고 해서 틀렸던거였어 ㅋㅋㅋㅋ
+	// 진짜 어이없다 ㅋㅋㅋㅋㅋㅋㅋㅋㅋㅋㅋㅋ
 	//dir = directory;
 	// 이건 원래 적힌 filesys_create 함수처럼 해주면 됨
 	if (!success && clst != 0) {
@@ -117,7 +124,7 @@ filesys_create (const char *name, off_t initial_size) {
 	return success;
 
 	#else
-	struct dir *dir = dir_open_root ();
+	dir = dir_open_root ();
 	bool success = (dir != NULL
 			&& free_map_allocate (1, &inode_sector)
 			&& inode_create (inode_sector, initial_size, false)
@@ -125,14 +132,14 @@ filesys_create (const char *name, off_t initial_size) {
 	#endif
 	if (!success && inode_sector != 0)
 		//여기를 Fat_remove_chain으로 바꿔야할듯?
-		#ifdef EFILESYS
-			fat_remove_chain(sector_to_cluster(inode_sector), 0);
-		#else
+		//#ifdef EFILESYS
+			//fat_remove_chain(sector_to_cluster(inode_sector), 0);
+		//#else
 			free_map_release (inode_sector, 1);
-		#endif
+		//#endif
 	
-	//dir_close (dir);
-	create_file_inode(inode_open(inode_sector));
+	dir_close (dir);
+	//create_file_inode(inode_open(inode_sector));
 
 	return success;
 }
@@ -154,13 +161,23 @@ filesys_open (const char *name) {
 		struct inode *inode = NULL;
 
 		// 여기는 chdir과 같음. 경로 초기 세팅
+		//printf("(filesys_open) copy_name: %s\n", copy_name);
 		struct dir *dir = dir_open_root(); // 일단 기본이 되는 root 경로로 열어두고 시작
 		if (copy_name[0] != '/') {
-			dir = dir_reopen(thread_current()->current_dir);
+			// printf("(filesys_open) before dir: 0x%x\n", dir);
+			// printf("(filesys_open) curr dir: 0x%x\n", thread_current()->current_dir);
+			dir = dir_reopen(thread_current()->current_dir); // ㅇㅇ 이게 이상하다
+			//dir = thread_current()->current_dir;
+			// printf("(filesys_open) after dir: 0x%x\n", dir);
+		}
+		if (!strcmp(copy_name, "/")) {
+			// 즉, 그냥 path가 "/"인 경우에는 바로 dir_open_root() return하면 됨!!
+			return dir;
 		}
 		dir = parsing(dir, copy_name, final_name);
 		if (dir != NULL) {
 			dir_lookup(dir, final_name, &inode);
+			// printf("(filesys_open) lookup한 결과?: %s\n", dir_lookup(dir, final_name, &inode)? "success": "fail");
 			if ((inode != NULL) && check_symlink(inode)) {
 				dir_close(dir);
 				// 만약에 symlink file이면, name을 symlink_path로 바꿔줘야 함
@@ -337,12 +354,14 @@ struct dir *parsing(struct dir *dir, char *path, char *final_name) {
 	
 	// 여기서의 목적은 file_name만 parsing 해내는 것!
 	while (path_token != NULL) {
+		// printf("(parsing) path_token: %s, next_path: 5x\n", path_token, next_path);
 		if (next_path == NULL) {
 			// 하... 이걸 왜 생각 못했을까. dir은 lookup하기 전에 원래 상태 그대로 반환해야함.
 			break;
 		}
 
 		bool success_lookup = dir_lookup(dir, path_token, &inode);
+		// printf("(parsing) dir: 0x%x\n", dir);
 		// printf("inode == NULL: %d\n", inode == NULL);
 		// printf("success_lookup: %d\n", success_lookup); // false가 나옴. lookup이 실패했다는 뜻
 		if (success_lookup == false) {
@@ -389,9 +408,11 @@ struct dir *parsing(struct dir *dir, char *path, char *final_name) {
 				continue;
 			}
 
+			// printf("(parsing) 여기까지는 가지?\n");
 
 			dir_close(dir);
 			dir = dir_open(inode);
+			// printf("(parsing) dir open하고 난 다음: 0x%x\n", dir);
 			// 근데 여기서, 경로의 마지막은 file의 이름이므로 그걸 저장해야함
 			//char *check_next = strtok_r(NULL, "/", &save);
 			// 위의 next_path가 이 역할을 함
