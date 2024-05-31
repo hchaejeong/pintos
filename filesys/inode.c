@@ -70,14 +70,15 @@ byte_to_sector (const struct inode *inode, off_t pos) {
 		//이제 해당 offset pos을 가진 위치로 가서 거기에 담겨있는 value를 찾고 섹터값으로 변환해줘야한다 
 		for (int i = 0; i < (pos / DISK_SECTOR_SIZE); i++) {
 			pos_clst = fat_get(pos_clst);
-			// if (clst == 0) {
-			// 	return -1;
-			// }
+			if (pos_clst == 0) {
+				return -1;
+			}
 			//pos_clst = clst;
 		}
 		if (pos_clst == EOChain) {
 			return -1;
 		}
+		//printf("cluster num: %d", pos_clst);
 		return cluster_to_sector(pos_clst);
 		//return cluster_to_sector(clst);
 	} else {
@@ -120,6 +121,7 @@ inode_create (disk_sector_t sector, off_t length, bool directory) {
 		disk_inode->length = length;
 		disk_inode->magic = INODE_MAGIC;
 		disk_inode->directory = directory;
+		disk_inode->start = 0;
 		
 		#ifdef EFILESYS
 		//새로운 chain을 만들어줘야하니까 0으로 입력해서 new chain이 allocate가 되는지 보고 (free한 공간 충분)
@@ -140,10 +142,10 @@ inode_create (disk_sector_t sector, off_t length, bool directory) {
 
 			//FAT table안에서 빈 cluster들을 불러와서 파일 크기에 맞게 클러스터 체인을 만들어준다
 			//이때 실제 값들을 넣어주는게 아닌 흩어진 섹터들을 연결해주는 작업만 한다!
-			cluster_t new_clst;
+			cluster_t new_clst = allocate;
 			count = sectors;
 			while (count > 0) {
-				new_clst = fat_create_chain(allocate);
+				new_clst = fat_create_chain(new_clst);
 				if (new_clst == 0) {
 					//chain에 cluster를 추가하는게 실패한거니까 free하고 revmoe해줘야한다
 					fat_remove_chain(allocate, 0);
@@ -151,7 +153,7 @@ inode_create (disk_sector_t sector, off_t length, bool directory) {
 					return false;
 				}
 
-				allocate = new_clst;
+				//allocate = new_clst;
 				count--;
 			}
 			//여기까지 나온거면 chain이 다 성공적으로 만들어진거니까 이때 처음 만든 sector를 start로 지정해준다
@@ -313,6 +315,7 @@ inode_read_at (struct inode *inode, void *buffer_, off_t size, off_t offset) {
 
 		if (sector_ofs == 0 && chunk_size == DISK_SECTOR_SIZE) {
 			/* Read full sector directly into caller's buffer. */
+			//printf("sector index: %d", sector_idx);
 			disk_read (filesys_disk, sector_idx, buffer + bytes_read); 
 		} else {
 			/* Read sector into bounce buffer, then partially copy

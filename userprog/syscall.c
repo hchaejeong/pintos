@@ -408,6 +408,7 @@ read (int fd, void *buffer, unsigned size) {
 		}
 		lock_acquire(&file_lock);
 		//struct file *curr_file = fd_elem->current_file;
+		//printf("buffer: %s", buffer);
 		read_bytes = file_read(curr_file, buffer, size);
 		lock_release(&file_lock);
 	}
