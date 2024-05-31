@@ -276,5 +276,5 @@ cluster_to_sector (cluster_t clst) {
 cluster_t
 sector_to_cluster (disk_sector_t sector) {
 	disk_sector_t difference = sector - fat_fs->data_start;
-	return difference + 1;
+	return (cluster_t) difference + 1;
 }
