@@ -185,6 +185,8 @@ dir_remove (struct dir *dir, const char *name) {
 	ASSERT (dir != NULL);
 	ASSERT (name != NULL);
 
+	//printf("(dir_remove) 들어가?\n");
+
 	/* Find directory entry. */
 	if (!lookup (dir, name, &e, &ofs))
 		goto done;
@@ -193,6 +195,8 @@ dir_remove (struct dir *dir, const char *name) {
 	inode = inode_open (e.inode_sector);
 	if (inode == NULL)
 		goto done;
+
+	// 만약에 dir인 경우,
 
 	/* Erase directory entry. */
 	e.in_use = false;

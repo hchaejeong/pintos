@@ -544,3 +544,8 @@ char inode_data_symlink_path (struct inode *inode) {
 int length_symlink_path (struct inode *inode) {
 	return strlen(inode->data.symlink_path) + 1;
 }
+
+bool is_file_dir (struct file *file) {
+	struct inode *inode = get_file_inode(file);
+	return inode->data.directory;
+}

@@ -277,7 +277,7 @@ remove (const char *file) {
 //or -1 if the file could not be opened.
 int
 open (const char * file) {
-	printf("(open) 여기로 들어가나?\n");
+	// printf("(open) 여기로 들어가나?\n");
 	if (file == NULL) {
 		return -1;
 	}
@@ -293,12 +293,12 @@ open (const char * file) {
 	lock_acquire(&file_lock);
 	struct file *actual_file = filesys_open(file);
 	lock_release(&file_lock);
-	printf("(open) filesys_open이 안되는 것임?\n");
+	// printf("(open) filesys_open이 안되는 것임?\n");
 	
 	if (!actual_file) {		//파일을 열지 못한 경우
 		//free (fd_elem);		//할당한 공간을 사용하지 않았기 때문에 다시 free해줘서 다른 애들이 쓸 수 있게 해준다.
 		//lock_release(&file_lock);
-		printf("(open) file을 열지 못한 경우야?\n");
+		// printf("(open) file을 열지 못한 경우야?\n");
 		return -1;
 	}
 
@@ -451,6 +451,12 @@ write (int fd, const void *buffer, unsigned size) {
 		} else {
 			lock_acquire(&file_lock);
 			struct file *curr_file = fd_elem->current_file;
+			//printf("(write) 하면 안되는데 해서 그런거?\n");
+			if (is_file_dir(curr_file)) {
+				// dir인 경우에는 write가 불가하다!! 따라서 return -1을 해야함!!!
+				lock_release(&file_lock);
+				return -1;
+			}
 			write_bytes = (int) file_write(curr_file, buffer, size);	//off_t 타입으로 나와니까 int으로 만들어주고 반환
 			lock_release(&file_lock);
 		}
@@ -785,7 +791,8 @@ bool chdir (const char *dir) {
 		// 위 과정을 돌면서 아무 문제가 없었으면
 		// 이제 실제 thread의 dir을 바꿔주는 작업을 하면 됨
 		// real_dir에 저장해줘야 할 dir이 저장이 되어있음
-		printf("혹시 여기에 안 들어가니?\n");
+		// printf("혹시 여기에 안 들어가니?\n");
+		// printf("(chdir) real dir: 0x%x, curr dir: 0x%x\n", real_dir, thread_current()->current_dir);
 		dir_close(thread_current()->current_dir);
 		thread_current()->current_dir = real_dir;
 		return true;
@@ -796,7 +803,7 @@ bool chdir (const char *dir) {
 }
 
 bool mkdir (const char *dir) {
-	printf("(mkdir) dir: %s\n", dir);
+	//printf("(mkdir) dir: %s\n", dir);
 	/* 상대적, 절대적 모두 가능한 dir이라는 directory를 만듦.
 	성공하면 true, 실패하면 false 반환.
 	dir이 이미 존재하거나 & 그 앞의 경로가 없는 경우에는 false
@@ -811,6 +818,7 @@ bool mkdir (const char *dir) {
 		// 그런데 dir이 상대 경로면 현재 thread의 dir로 세팅해둬야 함
 		// '/'로 시작하면 절대 경로, 아니면 상대 경로
 		// 그냥 open ㄴㄴ. reopen함으로써 서로 간섭 안나게 해야함
+		// printf("(mkdir) dir name: %s, curr dir: 0x%x\n", dir, thread_current()->current_dir);
 		real_dir = dir_reopen(thread_current()->current_dir);
 	}
 
@@ -849,6 +857,7 @@ bool mkdir (const char *dir) {
 		}
 		bool is_inode_dir = inode_is_directory(inode);
 		if (!(success_lookup && is_inode_dir)) {
+			// printf("(mkdir) 설마... inode_is_dir이 실패한거야?\n");
 			dir_close(real_dir);
 			//NOT_REACHED();
 			//inode_close(inode);
@@ -857,6 +866,7 @@ bool mkdir (const char *dir) {
 		} else {
 			// 링크 파일인 경우는 앞서서 한 번 더 돌리면 될 것 같음
 			if (check_symlink(inode)) {
+				// printf("(mkdir) 설마 symlink에는 안 들어가지?\n");
 				// 아니 대체 왜 inode->data.symlink가 안되는건데 ㅋㅋ
 				// inode의 path를 복사해온다!
 				char *inode_path = (char*)malloc(sizeof(length_symlink_path(inode)));
@@ -883,6 +893,7 @@ bool mkdir (const char *dir) {
 
 			dir_close(real_dir);
 			real_dir = dir_open(inode);
+			// printf("(mkdir) real_dir: 0x%x\n", real_dir);
 			// 근데 여기서, 경로의 마지막은 file의 이름이므로 그걸 저장해야함
 			// char *check_next = strtok_r(NULL, "/", &save);
 			// if (check_next == NULL) {
@@ -899,37 +910,47 @@ bool mkdir (const char *dir) {
 
 	strlcpy(file_name, dir_token, strlen(dir_token) + 1);
 
+	// 위에서 다 돌리고, 현재 값 가지고 lookup을 해봐야 함
+	bool lookup_success = dir_lookup(real_dir, file_name, &inode);
+	// printf("(mkdir) inode가 null인가? %s\n", inode == NULL? "true":"false");
+
+
 	// 새로운 chain을 만들어서 inode sector 번호를 받아야 함
 	cluster_t inode_sector_num = fat_create_chain(0);
 	// dir이 NULL이면 당연히 error
 	if (real_dir == NULL) { goto error; }
 	
 	// 이렇게 만들어진 sector에 위에서 받은 file_name의 dir을 만들어야 함. 안 만들어지면 당연히 error
-	bool create_dir = dir_create(inode_sector_num, 16);
+	// bool create_dir = dir_create(inode_sector_num, 16);
+	bool create_dir = dir_create(cluster_to_sector(inode_sector_num), 0);
 	if (!create_dir) { goto error; }
 
 	// dir에 file_name entry를 추가해줘야 함. 잘 안되면 당연히 goto error
-	bool add_file_name = dir_add(real_dir, file_name, inode_sector_num);
+	bool add_file_name = dir_add(real_dir, file_name, cluster_to_sector(inode_sector_num));
 	if (!add_file_name) { goto error; }
 
+	/*
 	// 그리고, 한 번 더 마지막 file_name으로 lookup해서 안나오면 return false임
 	struct inode *check_inode = NULL;
 	bool check_lookup = dir_lookup(real_dir, file_name, &check_inode);
 	if (!check_lookup) { goto error; }
+	*/
 
-	/*
+	
 	// gitbook에 적힌 대로, Unix의 특수 파일 이름을 나타내는 "."랑 ".."도 넣어줘야함
-	struct dir *check_dir = dir_open(check_inode);
-	bool add_dot = dir_add(check_dir, ".", inode_sector_num);
+	//struct dir *check_dir = dir_open(check_inode);
+	struct dir *check_dir = dir_open(inode_open(cluster_to_sector(inode_sector_num)));
+	// printf("(mkdir) real dir: 0x%x, check_dir: 0x%x\n", real_dir, check_dir);
+	bool add_dot = dir_add(check_dir, ".", cluster_to_sector(inode_sector_num));
 	bool add_dot_dot = dir_add(check_dir, "..", inode_get_inumber(dir_get_inode(real_dir)));
 	if (!(add_dot && add_dot_dot)) {
 		dir_close(check_dir);
 		goto error;
 	}
-	*/
+	
 
 	dir_close(real_dir);
-	//dir_close(check_dir);
+	dir_close(check_dir);
 	free(copy_dir);
 	free(file_name);
 
