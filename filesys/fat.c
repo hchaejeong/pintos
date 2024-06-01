@@ -227,11 +227,12 @@ fat_remove_chain (cluster_t clst, cluster_t pclst) {
 	/* TODO: Your code goes here. */
 	//clst에서 시작해서 이어지는 cluster들을 제거해야하니까 여기서 EOChain을 가진 cluster를 찾을때까지
 	//각 fat entry에 0으로 free하다고 값을 바꿔줘야한다
-	cluster_t entry = fat_get(clst);	
-	while (entry != EOChain) {
-		cluster_t curr_val = entry;
+	//cluster_t entry = fat_get(clst);	
+	while (fat_get(clst) != EOChain) {
+		cluster_t entry = fat_get(clst);
+		//cluster_t curr_val = fat_get(clst);
 		fat_put(entry, 0);
-		entry = fat_get(curr_val);
+		clst = entry;
 	}
 
 	if (pclst == 0) {

@@ -270,6 +270,7 @@ inode_close (struct inode *inode) {
 		if (inode->removed) {
 			#ifdef EFILESYS
 				fat_remove_chain(sector_to_cluster(inode->sector), 0);
+				//fat_remove_chain(sector_to_cluster(inode->data.start), 0);
 			#else
 				free_map_release (inode->sector, 1);
 				free_map_release (inode->data.start,
@@ -549,4 +550,8 @@ int length_symlink_path (struct inode *inode) {
 bool is_file_dir (struct file *file) {
 	struct inode *inode = get_file_inode(file);
 	return inode->data.directory;
+}
+
+int get_open_count (struct inode *inode) {
+	return inode->open_cnt;
 }
