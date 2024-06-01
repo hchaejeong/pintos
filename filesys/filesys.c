@@ -246,6 +246,11 @@ filesys_remove (const char *name) {
 		if (copy_name[0] != '/') {
 			dir = dir_reopen(thread_current()->current_dir);
 		}
+		if (!strcmp(copy_name, "/")) {
+			// 즉, 그냥 path가 "/"인 경우에는 바로 false return하면 됨!!
+			return ret;
+		}
+
 		dir = parsing(dir, copy_name, final_name);
 
 		if (dir != NULL) {
