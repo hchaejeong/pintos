@@ -28,7 +28,8 @@ bool check_symlink(struct inode *inode);
 char copy_inode_link (struct inode *inode, char *path);
 char inode_data_symlink_path (struct inode *inode);
 int length_symlink_path (struct inode *inode);
+int get_open_count (struct inode *inode);
 
-bool is_file_dir (struct file *file);
+//bool is_file_dir (struct file *file);
 
 #endif /* filesys/inode.h */

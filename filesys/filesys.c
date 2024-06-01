@@ -247,36 +247,38 @@ filesys_remove (const char *name) {
 		dir = parsing(dir, copy_name, final_name);
 
 		if (dir != NULL) {
-			dir_lookup(dir, final_name, &inode);
+			//dir_lookup(dir, final_name, &inode);
 			
-			//filesys_remove에서는, dir인 경우와 file인 경우로 나눠서 처리해줘야 함
-			if (inode_is_directory(inode)) {
-				// dir인 경우!
-				struct dir *dir_now = dir_open(inode);
-				dir_change_pos(dir_now);
+			// //filesys_remove에서는, dir인 경우와 file인 경우로 나눠서 처리해줘야 함
+			// if (inode_is_directory(inode)) {
+			// 	// dir인 경우!
+			// 	struct dir *dir_now = dir_open(inode);
+			// 	dir_change_pos(dir_now);
 
-				char *empty_name = (char *)malloc(NAME_MAX + 1);
-				if (dir_readdir(dir_now, empty_name)) {
-					// dir이 비지 않은 경우 (name이 찼다!)
-					// 그러면 파일을 지우면 됨!
-					ret = dir_remove(dir_now, final_name);
-				} else {
-					// dir이 빈 경우
-					// 지금 이 dir에 current thread가 접속해있으면 지우면 안됨.
-					// 그게 아니라면 지워야함 ㅇㅇ
-					struct inode *current_inode = dir_get_inode(thread_current()->current_dir);
-					struct inode *dir_now_inode = dir_get_inode(dir_now);
-					if (inode_get_inumber(current_inode) != inode_get_inumber(dir_now_inode)) {
-						ret = dir_remove(dir, final_name);
-					}
-				}
-				dir_close(dir_now);
-				free(empty_name);
-			} else {
-				// file인 경우! 파일만 잘 닫으면 됨~
-				inode_close(inode);
-				ret = dir_remove(dir, final_name);
-			}
+			// 	char *empty_name = (char *)malloc(NAME_MAX + 1);
+			// 	if (dir_readdir(dir_now, empty_name)) {
+			// 		// dir이 비지 않은 경우 (name이 찼다!)
+			// 		// 그러면 파일을 지우면 됨!
+			// 		ret = dir_remove(dir_now, final_name);
+			// 	} else {
+			// 		// dir이 빈 경우
+			// 		// 지금 이 dir에 current thread가 접속해있으면 지우면 안됨.
+			// 		// 그게 아니라면 지워야함 ㅇㅇ
+			// 		struct inode *current_inode = dir_get_inode(thread_current()->current_dir);
+			// 		struct inode *dir_now_inode = dir_get_inode(dir_now);
+			// 		if (inode_get_inumber(current_inode) != inode_get_inumber(dir_now_inode)) {
+			// 			ret = dir_remove(dir, final_name);
+			// 		}
+			// 	}
+			// 	dir_close(dir_now);
+			// 	free(empty_name);
+			// } else {
+			// 	// file인 경우! 파일만 잘 닫으면 됨~
+			// 	inode_close(inode);
+			// 	ret = dir_remove(dir, final_name);
+			// }
+			//printf("final name: %s", final_name);
+			ret = dir_remove(dir, final_name);
 		}
 
 		free(copy_name);
@@ -429,6 +431,7 @@ struct dir *parsing(struct dir *dir, char *path, char *final_name) {
 	}
 	// return하기 전에, 여기서 final_name을 copy 해줘야 한다.
 	// inode가 없는 것과는 별개로 
+	//printf("path token: %s", path_token);
 	strlcpy(final_name, path_token, strlen(path_token) + 1);
 
 	return dir;

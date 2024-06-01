@@ -550,3 +550,7 @@ bool is_file_dir (struct file *file) {
 	struct inode *inode = get_file_inode(file);
 	return inode->data.directory;
 }
+
+int get_open_count (struct inode *inode) {
+	return inode->open_cnt;
+}
