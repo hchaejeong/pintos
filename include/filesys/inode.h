@@ -29,6 +29,6 @@ char copy_inode_link (struct inode *inode, char *path);
 char inode_data_symlink_path (struct inode *inode);
 int length_symlink_path (struct inode *inode);
 
-bool is_file_dir (struct file *file);
+// bool is_file_dir (struct file *file);
 
 #endif /* filesys/inode.h */

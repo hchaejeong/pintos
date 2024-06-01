@@ -509,6 +509,7 @@ create_link_inode (disk_sector_t sector, char *target) {
 	disk_for_inode->directory = false;
 	disk_for_inode->symlink = true;
 	strlcpy(disk_for_inode->symlink_path, target, strlen(target) + 1);
+	// printf("(create_link_indoe) symlink_path: %s\n", disk_for_inode->symlink_path);
 
 	cluster_t inode_cluster = fat_create_chain(0);
 	if (inode_cluster == 0) {
@@ -517,7 +518,7 @@ create_link_inode (disk_sector_t sector, char *target) {
 		return false;
 	}
 	// chain이 잘 만들어졌으면,
-	disk_for_inode->start = inode_cluster;
+	disk_for_inode->start = cluster_to_sector(inode_cluster);
 	disk_write(filesys_disk, cluster_to_sector(inode_cluster), disk_for_inode);
 
 	return true;
@@ -529,7 +530,7 @@ bool check_symlink(struct inode *inode) {
 }
 
 char copy_inode_link (struct inode *inode, char *path) {
-	char *inode_link = (char*)malloc(sizeof(strlen(inode->data.symlink_path)) + 1);
+	char *inode_link = (char*)malloc((strlen(inode->data.symlink_path) + 1)*sizeof(char));
 	strlcpy(inode_link, inode->data.symlink_path, strlen(inode->data.symlink_path) + 1);
 	strlcpy(path, inode_link, strlen(inode_link) + 1);
 	free(inode_link);

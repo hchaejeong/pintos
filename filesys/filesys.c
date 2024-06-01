@@ -71,10 +71,10 @@ filesys_create (const char *name, off_t initial_size) {
 	#ifdef EFILESYS
 
 	// printf("(filesys_create) EFILESYS로 들어가나?\n"); // ㅇㅇ 여기로 들어감
-	char *copy_name = (char*)malloc(strlen(name) + 1);
+	char *copy_name = (char*)malloc((strlen(name) + 1) *sizeof(char));
 	strlcpy(copy_name, name, strlen(name) + 1);
 
-	char *final_name = (char*)malloc(strlen(name) + 1);
+	char *final_name = (char*)malloc((strlen(name) + 1) *sizeof(char));
 
 	// printf("(filesys_create) name[0]: %c\n", name[0]);
 	// printf("(filesys_create) copy_name[0]: %c\n", copy_name[0]);
@@ -153,10 +153,10 @@ struct file *
 filesys_open (const char *name) {
 	#ifdef EFILESYS
 		
-		char *copy_name = (char*)malloc(strlen(name) + 1);
+		char *copy_name = (char*)malloc((strlen(name) + 1) * sizeof(char));
 		strlcpy(copy_name, name, strlen(name) + 1);
 
-		char *final_name = (char*)malloc(strlen(name) + 1);
+		char *final_name = (char*)malloc((strlen(name) + 1) * sizeof(char));
 
 		struct inode *inode = NULL;
 
@@ -179,15 +179,17 @@ filesys_open (const char *name) {
 			dir_lookup(dir, final_name, &inode);
 			// printf("(filesys_open) lookup한 결과?: %s\n", dir_lookup(dir, final_name, &inode)? "success": "fail");
 			if ((inode != NULL) && check_symlink(inode)) {
+				// printf("(filesys_open) 아마 여기가 symlink라서 들어와야 할 텐데\n");
 				dir_close(dir);
 				// 만약에 symlink file이면, name을 symlink_path로 바꿔줘야 함
-				char *link_name = (char*)malloc(length_symlink_path(inode));
+				// printf("(filesys_open) symlink_path: %s\n", inode_data_symlink_path(inode));
+				char *link_name = (char*)malloc((length_symlink_path(inode)) * sizeof(char));
 				strlcpy(link_name, inode_data_symlink_path(inode), length_symlink_path(inode));
 				dir = dir_open_root();
 				if (link_name[0] != '/') {
 					dir = dir_reopen(thread_current()->current_dir);
 				}
-				char *link_final_name = (char*)malloc(length_symlink_path(inode));
+				char *link_final_name = (char*)malloc((length_symlink_path(inode)) * sizeof(char));
 				dir = parsing(dir, link_name, link_final_name);
 				if (dir != NULL) {
 					dir_lookup(dir, link_final_name, &inode);
@@ -230,10 +232,10 @@ filesys_open (const char *name) {
 bool
 filesys_remove (const char *name) {
 	#ifdef EFILESYS
-		char *copy_name = (char*)malloc(strlen(name) + 1);
+		char *copy_name = (char*)malloc((strlen(name) + 1)* sizeof(char));
 		strlcpy(copy_name, name, strlen(name) + 1);
 
-		char *final_name = (char*)malloc(strlen(name) + 1);
+		char *final_name = (char*)malloc((strlen(name) + 1)* sizeof(char));
 
 		struct inode *inode = NULL;
 
@@ -387,7 +389,7 @@ struct dir *parsing(struct dir *dir, char *path, char *final_name) {
 			if (check_symlink(inode)) {
 				// 아니 대체 왜 inode->data.symlink가 안되는건데 ㅋㅋ
 				// inode의 path를 복사해온다!
-				char *inode_path = (char*)malloc(sizeof(length_symlink_path(inode)));
+				char *inode_path = (char*)malloc(length_symlink_path(inode) * sizeof(char));
 				strlcpy(inode_path, inode_data_symlink_path(inode), length_symlink_path(inode));
 				
 				// inode path 경로에 symlink 뒷부분을 갖다붙이면 됨

@@ -178,6 +178,7 @@ syscall_handler (struct intr_frame *f UNUSED) {
 			break;
 		case (SYS_SYMLINK):
 			f->R.rax = symlink((const char *) f->R.rdi, (const char *) f->R.rsi);
+			break;
 		default:
 			printf ("system call!\n");
 			thread_exit ();
@@ -1047,6 +1048,7 @@ int symlink (const char *target, const char *linkpath) {
 
 	
 	// mkdir에서 썼던 parsing 코드를 들고와야함
+	// printf("(symlink) target: %s, linkpath: %s\n", target, linkpath);
 
 	if (linkpath == NULL || strlen(linkpath) == 0) {
 		return false;
@@ -1056,6 +1058,9 @@ int symlink (const char *target, const char *linkpath) {
 	if (linkpath[0] != '/') {
 		real_dir = dir_reopen(thread_current()->current_dir);
 	}
+
+	char *copy_target = (char *)malloc((strlen(target) + 1) * sizeof(char));
+	strlcpy(copy_target, target, strlen(target)+1);
 
 	char *copy_linkpath = (char *)malloc((strlen(linkpath)+1) * sizeof(char));
 	strlcpy(copy_linkpath, linkpath, strlen(linkpath) + 1);
@@ -1069,11 +1074,25 @@ int symlink (const char *target, const char *linkpath) {
 		strlcpy(file_name, ".", 2);
 	}
 
-	// 링크 파일인 경우는 앞서서 한 번 더 돌리면 될 것 같음
+	char *next_path = strtok_r(NULL, "/", &save);
 	
 	// 여기서의 목적은 file_name만 parsing 해내는 것!
 	while (linkpath_token != NULL) {
+		if (next_path == NULL) {
+			// 하... 이걸 왜 생각 못했을까. dir은 lookup하기 전에 원래 상태 그대로 반환해야함.
+			break;
+		}
 		bool success_lookup = dir_lookup(real_dir, linkpath_token, &inode);
+		if (success_lookup == false) {
+			// inode 자체가 NULL인걸로 dir_lookup에서 나와버렸는데, 그 inode를 가지고
+			// inode_is_directory를 실행하려니까 오류가 걸린 것이다.
+			// 따라서, 뒤에서 한 번에 if를 돌려주는게 아니라
+			// inode_is_directory 함수 자체가 오류가 나 버리니,
+			// 여기서 바로 dir = NULL을 해줘야 한다
+			dir_close(real_dir);
+			real_dir = NULL;
+			break;
+		}
 		bool is_inode_dir = inode_is_directory(inode);
 		if (!(success_lookup && is_inode_dir)) {
 			dir_close(real_dir);
@@ -1085,7 +1104,7 @@ int symlink (const char *target, const char *linkpath) {
 			if (check_symlink(inode)) {
 				// 아니 대체 왜 inode->data.symlink가 안되는건데 ㅋㅋ
 				// inode의 path를 복사해온다!
-				char *inode_path = (char*)malloc(sizeof(length_symlink_path(inode)));
+				char *inode_path = (char*)malloc((length_symlink_path(inode))*sizeof(char));
 				strlcpy(inode_path, inode_data_symlink_path(inode), length_symlink_path(inode));
 				
 				// inode path 경로에 symlink 뒷부분을 갖다붙이면 됨
@@ -1109,17 +1128,22 @@ int symlink (const char *target, const char *linkpath) {
 			dir_close(real_dir);
 			real_dir = dir_open(inode);
 			// 근데 여기서, 경로의 마지막은 file의 이름이므로 그걸 저장해야함
-			char *check_next = strtok_r(NULL, "/", &save);
-			if (check_next == NULL) {
+			// char *check_next = strtok_r(NULL, "/", &save);
+			// if (check_next == NULL) {
+			if (next_path == NULL) {
 				// file_name에 file name 복사해두기!
-				strlcpy(file_name, linkpath_token, strlen(linkpath_token) + 1);
+				// strlcpy(file_name, linkpath_token, strlen(linkpath_token) + 1);
 				break;
 			} else {
 				linkpath_token = file_name;
+				next_path = strtok_r(NULL, "/", &save);
 			}
 		}
 	}
 
+	strlcpy(file_name, linkpath_token, strlen(linkpath_token) + 1);
+
+	// printf("(symlink) file_name: %s\n", file_name);
 	// 새로운 chain을 만들어서 inode sector 번호를 받아야 함
 	cluster_t inode_sector_num = fat_create_chain(0);
 
@@ -1127,16 +1151,19 @@ int symlink (const char *target, const char *linkpath) {
 	if (real_dir == NULL) { goto error; }
 	
 	// 이렇게 만들어진 sector에 위에서 받은 file_name의 dir을 만들어야 함. 안 만들어지면 당연히 error
-	bool link_inode = create_link_inode(inode_sector_num, 16);
+	bool link_inode = create_link_inode(cluster_to_sector(inode_sector_num), copy_target);
 	if (!link_inode) { goto error; }
 
 	// dir에 file_name entry를 추가해줘야 함. 잘 안되면 당연히 goto error
-	bool add_file_name = dir_add(real_dir, file_name, inode_sector_num);
+	bool add_file_name = dir_add(real_dir, file_name, cluster_to_sector(inode_sector_num));
 	if (!add_file_name) { goto error; }
 
 	dir_close(real_dir);
+	free(copy_target);
 	free(copy_linkpath);
 	free(file_name);
+
+	// printf("(symlink) 성공했어?\n");
 
 	return 0; // 성공하면 0 반환
 error:
@@ -1144,6 +1171,7 @@ error:
 		fat_remove_chain(inode_sector_num, 0);
 	}
 	dir_close(real_dir);
+	free(copy_target);
 	free(copy_linkpath);
 	free(file_name);
 
