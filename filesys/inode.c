@@ -259,7 +259,7 @@ inode_close (struct inode *inode) {
 		return;
 
 	#ifdef EFILESYS
-		disk_write (filesys_disk, inode->sector, &inode->data);
+		//disk_write (filesys_disk, inode->sector, &inode->data);
 	#endif
 	/* Release resources if this was the last opener. */
 	if (--inode->open_cnt == 0) {
@@ -270,7 +270,9 @@ inode_close (struct inode *inode) {
 		if (inode->removed) {
 			#ifdef EFILESYS
 				fat_remove_chain(sector_to_cluster(inode->sector), 0);
-				//fat_remove_chain(sector_to_cluster(inode->data.start), 0);
+				if (inode->data.start != 0) {
+					fat_remove_chain(sector_to_cluster(inode->data.start), 0);
+				}
 			#else
 				free_map_release (inode->sector, 1);
 				free_map_release (inode->data.start,
@@ -392,7 +394,7 @@ inode_write_at (struct inode *inode, const void *buffer_, off_t size,
 		
 		//NOT_REACHED();
 		cluster_t chain = new_chain;
-		for (int i = start; i < end; i++) {
+		for (int i = start; i <= end; i++) {
 			chain = fat_create_chain(chain);
 			if (chain == 0) {
 				// if (fat_get(new_chain) != EOChain)

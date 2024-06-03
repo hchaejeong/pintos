@@ -240,11 +240,11 @@ dir_remove (struct dir *dir, const char *name) {
 		//지금 현재 프로세스에서 사용되고 있는 디렉토리면 안된다
 		struct dir *process_dir = thread_current()->current_dir;
 		if (process_dir != NULL) {
-			//NOT_REACHED();
 			struct inode *process_inode = dir_get_inode(process_dir);
 			if (process_inode == inode) {
 				//현재 사용되고 있는 inode가 같은 디렉토리의 Inode일때는 이 디렉토리를 제거하면 안된다
-				dir_close(curr_dir);
+				//NOT_REACHED();
+				//dir_close(curr_dir);
 				return false;
 			}
 		}
@@ -268,6 +268,7 @@ dir_remove (struct dir *dir, const char *name) {
 
 done:
 	inode_close (inode);
+	//printf("deleted: %s", name);
 	return success;
 }
 

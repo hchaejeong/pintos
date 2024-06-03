@@ -173,11 +173,10 @@ fat_fs_init (void) {
 cluster_t
 get_free_cluster() {
 	cluster_t free_space = 0;
-	for (cluster_t entry = fat_fs->bs.root_dir_cluster + 1; entry < (cluster_t)fat_fs->fat_length; entry++) {
+	for (cluster_t entry = 1; entry < (cluster_t)fat_fs->fat_length; entry++) {
 		if (fat_get(entry) == 0) {
 			//fat가 값이 0이면 free하다는 뜻이니까 이 처음 위치를 받아서 이걸 clst의 값으로 해서 연결시킨다
-			free_space = entry;
-			break;
+			return entry;
 		}
 	}
 
@@ -193,28 +192,37 @@ fat_create_chain (cluster_t clst) {
 	//int *fat = fat_fs->fat;
 	cluster_t free_space = get_free_cluster();
 
+	if (free_space == 0) {
+		return 0;
+	}
+
 	if (clst == 0) {
 		//여기서 새로운 chain을 만드니까 지금 들어온 clst가 chain의 첫 클러스터가 된다
 		//새로운 Chain을 만들기 위해 free한 공간을 하나 찾아서 배정해줘야한다
 		//아직 이거만 있으니까 end of file일테니 EOChain으로 표시해준다
+		
 		if (free_space != 0) {
 			fat_put(free_space, EOChain);
 		} else {
-			return 0;
+		 	return 0;
 		}
 	} else {
 		//해당 clst에 새로운 cluster를 하나 추가해주는거기 때문에 
 		//할당할 수 있는 free cluster를 찾고 이 위치넘버를 현재 clst의 값으로 넣어서 연결해줘야한다
+		
 		if (free_space != 0) {
+			fat_put(free_space, EOChain);
 			fat_put(clst, free_space);
 		} else {
 			return 0;
 		}
 
 		//여기서도 이 새롭게 추가해줄 cluster가 결국에 이 chain의 마지막 부분이 되는거니까 EOChain으로 세팅해야한다
-		fat_put(free_space, EOChain);
+		
 	}
 	char zero_buf[DISK_SECTOR_SIZE] = {0};
+	//printf("maximum clst: %d", fat_fs->fat_length);
+	//printf("free clst found: %d", free_space);
 	disk_write(filesys_disk, cluster_to_sector(free_space), zero_buf);
 
 	return free_space;
@@ -225,23 +233,31 @@ fat_create_chain (cluster_t clst) {
 void
 fat_remove_chain (cluster_t clst, cluster_t pclst) {
 	/* TODO: Your code goes here. */
-	//clst에서 시작해서 이어지는 cluster들을 제거해야하니까 여기서 EOChain을 가진 cluster를 찾을때까지
-	//각 fat entry에 0으로 free하다고 값을 바꿔줘야한다
-	//cluster_t entry = fat_get(clst);	
-	while (fat_get(clst) != EOChain) {
-		cluster_t entry = fat_get(clst);
-		//cluster_t curr_val = fat_get(clst);
-		fat_put(entry, 0);
-		clst = entry;
-	}
-
-	if (pclst == 0) {
-		//그럼 clst가 beginning of chain이기 때문에 이거를 0으로 바꿔줘야한다
-		fat_put(clst, 0);
-	} else {
+	//cluster_t next_clst = fat_get(clst);
+	// if (pclst == 0) {
+	// 	//그럼 clst가 beginning of chain이기 때문에 이거를 0으로 바꿔줘야한다
+	// 	fat_put(clst, 0);
+	// } 
+	if (pclst != 0) {
 		//0이 아닌경우에는 우리가 제거한 chain of cluster의 바로 직전 entry를 가지고 있으니
 		//지금 제거한거랑 구분하기 위해서 이 pclst는 end of chain이라는걸 표시해줘야한다
 		fat_put(pclst, EOChain);
+		fat_put(clst, 0);
+	} else {
+		fat_put(clst, 0);
+	}
+	
+	//clst에서 시작해서 이어지는 cluster들을 제거해야하니까 여기서 EOChain을 가진 cluster를 찾을때까지
+	//각 fat entry에 0으로 free하다고 값을 바꿔줘야한다
+	cluster_t entry = fat_get(clst);
+	cluster_t prev = clst;	
+	while (entry != EOChain && entry != 0) {
+		cluster_t next_clst = entry;
+		fat_put(prev, 0);
+		//cluster_t entry = fat_get(next_clst);
+		//cluster_t curr_val = fat_get(clst);
+		prev = next_clst;
+		entry = fat_get(prev);
 	}
 }
 
@@ -277,5 +293,5 @@ cluster_to_sector (cluster_t clst) {
 cluster_t
 sector_to_cluster (disk_sector_t sector) {
 	disk_sector_t difference = sector - fat_fs->data_start;
-	return (cluster_t) difference + 1;
+	return (cluster_t) (difference + 1);
 }

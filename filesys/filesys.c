@@ -95,13 +95,15 @@ filesys_create (const char *name, off_t initial_size) {
 	// 여기서부터는 채정이가 쓴 것
 	cluster_t clst = fat_create_chain(0);
 	
-	// if (clst == 0) {
-	// 	fat_remove_chain(clst, 0);
-	// 	return false;
-	// }
+	if (clst == 0) {
+		dir_close(dir);
+		free(copy_name);
+		free(final_name);
+		return false;
+	}
 	
 
-	//inode_sector = cluster_to_sector(clst);
+	inode_sector = cluster_to_sector(clst);
 	//create_file_inode(inode_open(inode_sector));
 	// printf("(filesys_create) dir != NULL: %d\n", dir != NULL);
 	bool success = (dir != NULL && inode_create (cluster_to_sector(clst), initial_size, false)
@@ -114,7 +116,7 @@ filesys_create (const char *name, off_t initial_size) {
 	if (!success && clst != 0) {
 		// printf("(filesys_create) success: %d\n", success); // 얘가 0이다. 뭐가 문제였을까
 		// printf("(filesys_create) clst != 0: %d\n", clst != 0);
-		fat_remove_chain(clst, 0);
+		fat_remove_chain(sector_to_cluster(inode_sector), 0);
 	}
 
 	free(copy_name);
@@ -129,11 +131,11 @@ filesys_create (const char *name, off_t initial_size) {
 			&& free_map_allocate (1, &inode_sector)
 			&& inode_create (inode_sector, initial_size, false)
 			&& dir_add (dir, name, inode_sector));
-	#endif
+	
 	if (!success && inode_sector != 0)
 		//여기를 Fat_remove_chain으로 바꿔야할듯?
 		//#ifdef EFILESYS
-			//fat_remove_chain(sector_to_cluster(inode_sector), 0);
+			fat_remove_chain(sector_to_cluster(inode_sector), 0);
 		//#else
 			free_map_release (inode_sector, 1);
 		//#endif
@@ -142,6 +144,7 @@ filesys_create (const char *name, off_t initial_size) {
 	//create_file_inode(inode_open(inode_sector));
 
 	return success;
+	#endif
 }
 
 /* Opens the file with the given NAME.
@@ -163,6 +166,10 @@ filesys_open (const char *name) {
 		// 여기는 chdir과 같음. 경로 초기 세팅
 		//printf("(filesys_open) copy_name: %s\n", copy_name);
 		struct dir *dir = dir_open_root(); // 일단 기본이 되는 root 경로로 열어두고 시작
+		if (!strcmp(copy_name, "/")) {
+			// 즉, 그냥 path가 "/"인 경우에는 바로 dir_open_root() return하면 됨!!
+			return dir;
+		}
 		if (copy_name[0] != '/') {
 			// printf("(filesys_open) before dir: 0x%x\n", dir);
 			// printf("(filesys_open) curr dir: 0x%x\n", thread_current()->current_dir);
@@ -170,10 +177,7 @@ filesys_open (const char *name) {
 			//dir = thread_current()->current_dir;
 			// printf("(filesys_open) after dir: 0x%x\n", dir);
 		}
-		if (!strcmp(copy_name, "/")) {
-			// 즉, 그냥 path가 "/"인 경우에는 바로 dir_open_root() return하면 됨!!
-			return dir;
-		}
+		
 		dir = parsing(dir, copy_name, final_name);
 		if (dir != NULL) {
 			dir_lookup(dir, final_name, &inode);
@@ -381,6 +385,32 @@ struct dir *parsing(struct dir *dir, char *path, char *final_name) {
 			dir = NULL;
 			break;
 		}
+		dir_close(dir);
+
+		if (check_symlink(inode)) {
+			// 아니 대체 왜 inode->data.symlink가 안되는건데 ㅋㅋ
+			// inode의 path를 복사해온다!
+			char *inode_path = (char*)malloc(length_symlink_path(inode) * sizeof(char));
+			strlcpy(inode_path, inode_data_symlink_path(inode), length_symlink_path(inode) + 1);
+			
+			// inode path 경로에 symlink 뒷부분을 갖다붙이면 됨
+			// ../file 이런 식으로 되어있던 걸 inode path/file 이런 형식으로!
+			strlcat(inode_path, "/", strlen(inode_path) + 2);
+			strlcat(inode_path, save, strlen(inode_path) + strlen(save) + 1);
+
+			//dir_close(dir);
+
+			// 그리고 while문 다시 시작해야함!
+			dir = dir_open_root();
+			if (path[0] != '/') {
+				dir = dir_reopen(thread_current()->current_dir);
+			}
+			strlcpy(path, inode_path, strlen(inode_path) + 1);
+			inode_close(inode);
+			free(inode_path);
+			path_token = strtok_r(path, "/", &save);
+			continue;
+		}
 
 		bool is_inode_dir = inode_is_directory(inode); // 와 이게 문제였다.
 		// inode 자체가 NULL인걸로 dir_lookup에서 나와버렸는데, 그 inode를 가지고
@@ -393,33 +423,9 @@ struct dir *parsing(struct dir *dir, char *path, char *final_name) {
 			break;
 		} else {
 			// 링크 파일인 경우는 앞서서 한 번 더 돌리면 될 것 같음
-			if (check_symlink(inode)) {
-				// 아니 대체 왜 inode->data.symlink가 안되는건데 ㅋㅋ
-				// inode의 path를 복사해온다!
-				char *inode_path = (char*)malloc(length_symlink_path(inode) * sizeof(char));
-				strlcpy(inode_path, inode_data_symlink_path(inode), length_symlink_path(inode));
-				
-				// inode path 경로에 symlink 뒷부분을 갖다붙이면 됨
-				// ../file 이런 식으로 되어있던 걸 inode path/file 이런 형식으로!
-				strlcat(inode_path, "/", strlen(inode_path) + 2);
-				strlcat(inode_path, save, strlen(inode_path) + strlen(save) + 1);
-
-				dir_close(dir);
-
-				// 그리고 while문 다시 시작해야함!
-				dir = dir_open_root();
-				if (path[0] != '/') {
-					dir = dir_reopen(thread_current()->current_dir);
-				}
-				strlcpy(path, inode_path, strlen(inode_path) + 1);
-				free(inode_path);
-				path_token = strtok_r(path, "/", &save);
-				continue;
-			}
-
 			// printf("(parsing) 여기까지는 가지?\n");
 
-			dir_close(dir);
+			//dir_close(dir);
 			dir = dir_open(inode);
 			// printf("(parsing) dir open하고 난 다음: 0x%x\n", dir);
 			// 근데 여기서, 경로의 마지막은 file의 이름이므로 그걸 저장해야함

@@ -918,6 +918,12 @@ bool mkdir (const char *dir) {
 
 	// 새로운 chain을 만들어서 inode sector 번호를 받아야 함
 	cluster_t inode_sector_num = fat_create_chain(0);
+	if (inode_sector_num == 0) {
+		dir_close(real_dir);
+		free(copy_dir);
+		free(file_name);
+		return false;
+	}
 	// dir이 NULL이면 당연히 error
 	if (real_dir == NULL) { goto error; }
 	
