@@ -407,6 +407,7 @@ read (int fd, void *buffer, unsigned size) {
 		if (curr_file == NULL) {
 			return -1;
 		}
+		// printf("(read) 이 sector이 0인 inode는 어디에서 왔는가\n");
 		lock_acquire(&file_lock);
 		//struct file *curr_file = fd_elem->current_file;
 		//printf("buffer: %s", buffer);
@@ -856,7 +857,37 @@ bool mkdir (const char *dir) {
 			real_dir = NULL;
 			break;
 		}
+
+		// 링크 파일인 경우는 앞서서 한 번 더 돌리면 될 것 같음
+		// check_symlink를 먼저 돌려야 하는 이유는 filesys.c의 parsing에 적혀있음...
+		if (check_symlink(inode)) {
+			// printf("(mkdir) 설마 symlink에는 안 들어가지?\n");
+			// 아니 대체 왜 inode->data.symlink가 안되는건데 ㅋㅋ
+			// inode의 path를 복사해온다!
+			char *inode_path = (char*)malloc(length_symlink_path(inode) * sizeof(char));
+			strlcpy(inode_path, inode_data_symlink_path(inode), length_symlink_path(inode));
+			
+			// inode path 경로에 symlink 뒷부분을 갖다붙이면 됨
+			// ../file 이런 식으로 되어있던 걸 inode path/file 이런 형식으로!
+			strlcat(inode_path, "/", strlen(inode_path) + 2);
+			// strlcat(inode_path, save, strlen(inode_path) + strlen(save) + 1);
+			strlcat(inode_path, next_path, strlen(inode_path) + strlen(next_path) + 1); // 이걸로 바꿔줘야
+
+			dir_close(real_dir);
+
+			// 그리고 while문 다시 시작해야함!
+			real_dir = dir_open_root();
+			if (dir[0] != '/') {
+				real_dir = dir_reopen(thread_current()->current_dir);
+			}
+			strlcpy(copy_dir, inode_path, strlen(inode_path) + 1);
+			free(inode_path);
+			dir_token = strtok_r(copy_dir, "/", &save);
+			continue;
+		}
+
 		bool is_inode_dir = inode_is_directory(inode);
+		// printf("is_inode_dir: %d\n", is_inode_dir);
 		if (!(success_lookup && is_inode_dir)) {
 			// printf("(mkdir) 설마... inode_is_dir이 실패한거야?\n");
 			dir_close(real_dir);
@@ -864,19 +895,22 @@ bool mkdir (const char *dir) {
 			//inode_close(inode);
 			real_dir = NULL; // dir이 없는 거니까 dir은 null로 세팅해줘야
 			break;
+		// /*
 		} else {
+			/*
 			// 링크 파일인 경우는 앞서서 한 번 더 돌리면 될 것 같음
 			if (check_symlink(inode)) {
 				// printf("(mkdir) 설마 symlink에는 안 들어가지?\n");
 				// 아니 대체 왜 inode->data.symlink가 안되는건데 ㅋㅋ
 				// inode의 path를 복사해온다!
-				char *inode_path = (char*)malloc(sizeof(length_symlink_path(inode)));
+				char *inode_path = (char*)malloc(length_symlink_path(inode) * sizeof(char));
 				strlcpy(inode_path, inode_data_symlink_path(inode), length_symlink_path(inode));
 				
 				// inode path 경로에 symlink 뒷부분을 갖다붙이면 됨
 				// ../file 이런 식으로 되어있던 걸 inode path/file 이런 형식으로!
 				strlcat(inode_path, "/", strlen(inode_path) + 2);
-				strlcat(inode_path, save, strlen(inode_path) + strlen(save) + 1);
+				// strlcat(inode_path, save, strlen(inode_path) + strlen(save) + 1);
+				strlcat(inode_path, next_path, strlen(inode_path) + strlen(next_path) + 1); // 이걸로 바꿔줘야
 
 				dir_close(real_dir);
 
@@ -890,7 +924,7 @@ bool mkdir (const char *dir) {
 				dir_token = strtok_r(copy_dir, "/", &save);
 				continue;
 			}
-
+			*/
 
 			dir_close(real_dir);
 			real_dir = dir_open(inode);
@@ -906,10 +940,12 @@ bool mkdir (const char *dir) {
 				dir_token = next_path;
 				next_path = strtok_r(NULL, "/", &save);
 			}
+		// */
 		}
 	}
 
 	strlcpy(file_name, dir_token, strlen(dir_token) + 1);
+	// printf("(mkdir) file_name: %s\n", file_name);
 
 	// 위에서 다 돌리고, 현재 값 가지고 lookup을 해봐야 함
 	bool lookup_success = dir_lookup(real_dir, file_name, &inode);
@@ -934,6 +970,7 @@ bool mkdir (const char *dir) {
 	// 그리고, 한 번 더 마지막 file_name으로 lookup해서 안나오면 return false임
 	struct inode *check_inode = NULL;
 	bool check_lookup = dir_lookup(real_dir, file_name, &check_inode);
+	// printf("(mkdir) check_lookup: %d\n", check_lookup);
 	if (!check_lookup) { goto error; }
 	*/
 
@@ -1065,6 +1102,8 @@ int symlink (const char *target, const char *linkpath) {
 	char *copy_linkpath = (char *)malloc((strlen(linkpath)+1) * sizeof(char));
 	strlcpy(copy_linkpath, linkpath, strlen(linkpath) + 1);
 
+	// printf("(symlink) copy_target: %s, copy_linkpath: %s\n", copy_target, copy_linkpath);
+
 	char *save;
 	char *linkpath_token = strtok_r(copy_linkpath, "/", &save);
 	struct inode *inode = NULL;
@@ -1078,6 +1117,7 @@ int symlink (const char *target, const char *linkpath) {
 	
 	// 여기서의 목적은 file_name만 parsing 해내는 것!
 	while (linkpath_token != NULL) {
+		// printf("(symlink) linkpath_token: %s, next_path: %s\n", linkpath_token, next_path);
 		if (next_path == NULL) {
 			// 하... 이걸 왜 생각 못했을까. dir은 lookup하기 전에 원래 상태 그대로 반환해야함.
 			break;
@@ -1089,19 +1129,54 @@ int symlink (const char *target, const char *linkpath) {
 			// 따라서, 뒤에서 한 번에 if를 돌려주는게 아니라
 			// inode_is_directory 함수 자체가 오류가 나 버리니,
 			// 여기서 바로 dir = NULL을 해줘야 한다
+			// printf("(symlink) success_lookup이 false\n");
 			dir_close(real_dir);
 			real_dir = NULL;
 			break;
 		}
+
+		// 링크 파일인 경우는 앞서서 한 번 더 돌리면 될 것 같음
+		if (check_symlink(inode)) {
+			// printf("(symlink)의 check_symlink\n");
+			// 아니 대체 왜 inode->data.symlink가 안되는건데 ㅋㅋ
+			// inode의 path를 복사해온다!
+			char *inode_path = (char*)malloc((length_symlink_path(inode))*sizeof(char));
+			strlcpy(inode_path, inode_data_symlink_path(inode), length_symlink_path(inode));
+			
+			// inode path 경로에 symlink 뒷부분을 갖다붙이면 됨
+			// ../file 이런 식으로 되어있던 걸 inode path/file 이런 형식으로!
+			strlcat(inode_path, "/", strlen(inode_path) + 2);
+			// strlcat(inode_path, save, strlen(inode_path) + strlen(save) + 1);
+			strlcat(inode_path, next_path, strlen(inode_path) + strlen(next_path) + 1); // 이걸로 바꿔줘야...ㅜㅜ
+
+			dir_close(real_dir);
+			
+			// 그리고 while문 다시 시작해야함!
+			real_dir = dir_open_root();
+			if (linkpath[0] != '/') {
+				real_dir = dir_reopen(thread_current()->current_dir);
+			}
+			strlcpy(copy_linkpath, inode_path, strlen(inode_path) + 1);
+			free(inode_path);
+			linkpath_token = strtok_r(copy_linkpath, "/", &save);
+			continue;
+		}
+
+
 		bool is_inode_dir = inode_is_directory(inode);
 		if (!(success_lookup && is_inode_dir)) {
+			// printf("(symlink) is_inode_dir이 false인 경우\n");
 			dir_close(real_dir);
-			inode_close(inode);
+			//inode_close(inode);
 			real_dir = NULL;
 			break;
+		// /*
 		} else {
+			// printf("(symlink) 에러가 다 아닌 경우...\n");
+			/*
 			// 링크 파일인 경우는 앞서서 한 번 더 돌리면 될 것 같음
 			if (check_symlink(inode)) {
+				// printf("(symlink)의 check_symlink\n");
 				// 아니 대체 왜 inode->data.symlink가 안되는건데 ㅋㅋ
 				// inode의 path를 복사해온다!
 				char *inode_path = (char*)malloc((length_symlink_path(inode))*sizeof(char));
@@ -1110,7 +1185,8 @@ int symlink (const char *target, const char *linkpath) {
 				// inode path 경로에 symlink 뒷부분을 갖다붙이면 됨
 				// ../file 이런 식으로 되어있던 걸 inode path/file 이런 형식으로!
 				strlcat(inode_path, "/", strlen(inode_path) + 2);
-				strlcat(inode_path, save, strlen(inode_path) + strlen(save) + 1);
+				// strlcat(inode_path, save, strlen(inode_path) + strlen(save) + 1);
+				strlcat(inode_path, next_path, strlen(inode_path) + strlen(next_path) + 1); // 이걸로 바꿔줘야...ㅜㅜ
 
 				dir_close(real_dir);
 				
@@ -1124,6 +1200,7 @@ int symlink (const char *target, const char *linkpath) {
 				linkpath_token = strtok_r(copy_linkpath, "/", &save);
 				continue;
 			}
+			*/
 
 			dir_close(real_dir);
 			real_dir = dir_open(inode);
@@ -1135,9 +1212,13 @@ int symlink (const char *target, const char *linkpath) {
 				// strlcpy(file_name, linkpath_token, strlen(linkpath_token) + 1);
 				break;
 			} else {
+				/*
 				linkpath_token = file_name;
+				*/
+				linkpath_token = next_path;
 				next_path = strtok_r(NULL, "/", &save);
 			}
+	// */
 		}
 	}
 
@@ -1150,13 +1231,22 @@ int symlink (const char *target, const char *linkpath) {
 	// dir이 NULL이면 당연히 error
 	if (real_dir == NULL) { goto error; }
 	
-	// 이렇게 만들어진 sector에 위에서 받은 file_name의 dir을 만들어야 함. 안 만들어지면 당연히 error
-	bool link_inode = create_link_inode(cluster_to_sector(inode_sector_num), copy_target);
-	if (!link_inode) { goto error; }
+	// inode를 만들어야 함
+	bool make_inode = inode_create(cluster_to_sector(inode_sector_num), 0, false);
+	if (!make_inode) { goto error; }
+
+	/*
+	bool create_dir = dir_create(cluster_to_sector(inode_sector_num), 0);
+	if (!create_dir) { goto error; }
+	*/
 
 	// dir에 file_name entry를 추가해줘야 함. 잘 안되면 당연히 goto error
 	bool add_file_name = dir_add(real_dir, file_name, cluster_to_sector(inode_sector_num));
 	if (!add_file_name) { goto error; }
+
+	// 이렇게 만들어진 sector에 위에서 받은 file_name의 dir을 만들어야 함. 안 만들어지면 당연히 error
+	bool link_inode = create_link_inode(cluster_to_sector(inode_sector_num), copy_target);
+	if (!link_inode) { goto error; }
 
 	dir_close(real_dir);
 	free(copy_target);

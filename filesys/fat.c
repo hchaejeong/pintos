@@ -269,6 +269,7 @@ disk_sector_t
 cluster_to_sector (cluster_t clst) {
 	/* TODO: Your code goes here. */
 	// printf("(cluster_to_sector) clst: %d, fat_fs->fat_length: %d\n", clst, fat_fs->fat_length);
+	// printf("(cluster_to_sector) if clst is 0?: %s\n", clst == 0? "true":"false");
 	ASSERT(clst > 0 && clst < fat_fs->fat_length);
 	return fat_fs->data_start + (clst - 1) * SECTORS_PER_CLUSTER;
 }
@@ -276,6 +277,7 @@ cluster_to_sector (cluster_t clst) {
 //inode.c에서 쓰이는 conversion 함수
 cluster_t
 sector_to_cluster (disk_sector_t sector) {
+	// printf("(sector_to_cluster) sector: %d, fat_fs->data_start: %d\n", sector, fat_fs->data_start);
 	disk_sector_t difference = sector - fat_fs->data_start;
 	return (cluster_t) difference + 1;
 }

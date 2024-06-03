@@ -63,6 +63,9 @@ byte_to_sector (const struct inode *inode, off_t pos) {
 	else
 		return -1;
 	*/
+	// printf("(byte_to_sector) check_symlink: %s\n", check_symlink(inode)? "true":"false");
+	// 지금 symlink인 경우에 inode->data.start가 0이 나오는 것 같다!!
+
 	if (pos < inode->data.length) {
 		//현재 inode가 들어있는 섹터를 가져온다
 		cluster_t pos_clst = sector_to_cluster(inode->data.start);
@@ -148,6 +151,7 @@ inode_create (disk_sector_t sector, off_t length, bool directory) {
 				new_clst = fat_create_chain(new_clst);
 				if (new_clst == 0) {
 					//chain에 cluster를 추가하는게 실패한거니까 free하고 revmoe해줘야한다
+					// printf("(inode_create) 설마 chain에 clst 추가 실패함?\n");
 					fat_remove_chain(allocate, 0);
 					free(disk_inode);
 					return false;
@@ -374,6 +378,7 @@ inode_write_at (struct inode *inode, const void *buffer_, off_t size,
 			if (new_chain == 0) {
 				//NOT_REACHED();
 				//chain이 만들어지지 않으면 file growth가 안되고 결국 실제로 데이터가 쓰여지지 않으니까 바로 0으로 반환시킨다
+				// printf("(inode_write_at) fat_create_chain이 error인 경우\n");
 				return 0;
 			} else {
 				//NOT_REACHED();
@@ -381,6 +386,7 @@ inode_write_at (struct inode *inode, const void *buffer_, off_t size,
 				inode->data.start = cluster_to_sector(new_chain);
 			}
 		} else {
+			// printf("(inode_write_at) inode->data.symlink_path: %s\n", inode->data.symlink_path);
 			//NOT_REACHED();
 			//이미 데이터 섹션이 있는 경우이기 때문에 그냥 체인을 연결해준다
 			new_chain = sector_to_cluster(inode->data.start);
@@ -395,6 +401,7 @@ inode_write_at (struct inode *inode, const void *buffer_, off_t size,
 		for (int i = start; i < end; i++) {
 			chain = fat_create_chain(chain);
 			if (chain == 0) {
+				// printf("(inode_write_at) 연속 chain 만들기가 fail인 경우\n");
 				// if (fat_get(new_chain) != EOChain)
 				// 	fat_remove_chain(fat_get(new_chain), new_chain);
 				return 0;
@@ -499,6 +506,7 @@ inode_is_directory (const struct inode *inode) {
 bool
 create_link_inode (disk_sector_t sector, char *target) {
 
+	/*
 	struct inode_disk *disk_for_inode = NULL;
 	disk_for_inode = calloc(1, sizeof *disk_for_inode);
 	
@@ -523,6 +531,32 @@ create_link_inode (disk_sector_t sector, char *target) {
 	disk_write(filesys_disk, cluster_to_sector(inode_cluster), disk_for_inode);
 
 	return true;
+	*/
+
+	// 이 함수 쓰기 전에 이미, inode_create로 만들었으므로 굳이 여기서도 만들 필요가 없었음.
+	// 그렇기에, 이미 만들어진 inode의 속성을 symlink에 맞게 변화시켜주는 과정만 필요함.
+
+	if (sector == NULL) {
+		return false;
+	}
+
+	struct inode *inode = inode_open(sector);
+	if (inode == NULL) {
+		inode_close(inode);
+		return false;
+	}
+
+	//printf("(create_link_inode) strlen(target)+1: %d\n", strlen(target)+1);
+	// inode->data.length = strlen(target) + 1;
+	// inode->data.magic = INODE_MAGIC;
+	// inode->data.directory = false;
+	inode->data.symlink = true;
+	// printf("(create_link_inode) target %s is %s\n", target, check_symlink(inode)? "symlink":"not symlink");
+	strlcpy(inode->data.symlink_path, target, strlen(target) + 1);
+	// printf("(create_link_inode) inode->data.symlink_path: %s\n", inode->data.symlink_path);
+	inode_close(inode);
+
+	return true;
 }
 
 bool check_symlink(struct inode *inode) {
@@ -540,10 +574,12 @@ char copy_inode_link (struct inode *inode, char *path) {
 }
 
 char inode_data_symlink_path (struct inode *inode) {
+	// printf("(inode_data_symlink_path) inode->data.symlink_path: %s\n", inode->data.symlink_path);
 	return inode->data.symlink_path;
 }
 
 int length_symlink_path (struct inode *inode) {
+	// printf("(length_symlink_path) : %d\n", strlen(inode->data.symlink_path) + 1);
 	return strlen(inode->data.symlink_path) + 1;
 }
 

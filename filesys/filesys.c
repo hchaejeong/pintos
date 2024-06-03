@@ -103,9 +103,21 @@ filesys_create (const char *name, off_t initial_size) {
 
 	//inode_sector = cluster_to_sector(clst);
 	//create_file_inode(inode_open(inode_sector));
-	// printf("(filesys_create) dir != NULL: %d\n", dir != NULL);
+	//printf("(filesys_create) dir != NULL: %d\n", dir != NULL);
+	
 	bool success = (dir != NULL && inode_create (cluster_to_sector(clst), initial_size, false)
 			&& dir_add (dir, final_name, cluster_to_sector(clst)));
+	
+	/*
+	// printf 확인용
+	bool success = (dir != NULL);
+	printf("(filesys_create) first %s\n", success? "success":"fail");
+	success = success && inode_create (cluster_to_sector(clst), initial_size, false);
+	printf("(filesys_create) second %s\n", success? "success":"fail");
+	success = success && dir_add (dir, final_name, cluster_to_sector(clst));
+	printf("(filesys_create) third %s\n", success? "success":"fail");
+	*/
+
 	// 와 ㅋㅋㅋㅋㅋㅋㅋㅋㅋㅋ
 	// dir_add (dir, name, cluster_to_sector(clst))); 이라고 해서 틀렸던거였어 ㅋㅋㅋㅋ
 	// 진짜 어이없다 ㅋㅋㅋㅋㅋㅋㅋㅋㅋㅋㅋㅋ
@@ -161,7 +173,7 @@ filesys_open (const char *name) {
 		struct inode *inode = NULL;
 
 		// 여기는 chdir과 같음. 경로 초기 세팅
-		//printf("(filesys_open) copy_name: %s\n", copy_name);
+		// printf("(filesys_open) copy_name: %s\n", copy_name);
 		struct dir *dir = dir_open_root(); // 일단 기본이 되는 root 경로로 열어두고 시작
 		if (copy_name[0] != '/') {
 			// printf("(filesys_open) before dir: 0x%x\n", dir);
@@ -178,13 +190,29 @@ filesys_open (const char *name) {
 		if (dir != NULL) {
 			dir_lookup(dir, final_name, &inode);
 			// printf("(filesys_open) lookup한 결과?: %s\n", dir_lookup(dir, final_name, &inode)? "success": "fail");
-			if ((inode != NULL) && check_symlink(inode)) {
+			while ((inode != NULL) && check_symlink(inode)) {
+				// symlink-link 경우를 보니, link_a->link_b->link_c 이런 식으로 다 이어져 있어서
+				// 계속해서 연속적으로 symlink_path를 열어줘야 하는 상황이었다.
+				// 따라서 아래처럼 if로만 했을때는 한 번만 반복이 되는거라 오류가 났던 것이었다.
+				// 그래서 while로 바꿔줌 ㅜㅜ
+			//if ((inode != NULL) && check_symlink(inode)) {
 				// printf("(filesys_open) 아마 여기가 symlink라서 들어와야 할 텐데\n");
 				dir_close(dir);
 				// 만약에 symlink file이면, name을 symlink_path로 바꿔줘야 함
 				// printf("(filesys_open) symlink_path: %s\n", inode_data_symlink_path(inode));
+				// printf("(filesys_open) symlink_path size: %d\n", length_symlink_path(inode) * sizeof(char));
+				//printf("(filesys_open) inode path: %s\n", inode_data_symlink_path(inode));
+				
+				// 이렇게 inode_data_symlink_path(inode)를 바로 출력하려니까 에러가 뜬다.
+				// 아니.. 왜그러나 싶어서 함수를 찾아보니까, 그냥 char 형태로 return이 불가능한것같음
+				// char[498]도 안되고 char * 리턴도 안되고 아니그러면 대체어케하라는건가 ㅋㅋ싶어서
+				// 그냥 아래 보면, 아예 malloc으로 새로운 공간 만들어서
+				// copy_inode_link()라는 함수로 옮겨담았다. 아니왜 char 반환이안되는거임 ㅋㅋㅋㅋㅋ아진짜 이거때문에 며칠을 삽질?
+
 				char *link_name = (char*)malloc((length_symlink_path(inode)) * sizeof(char));
-				strlcpy(link_name, inode_data_symlink_path(inode), length_symlink_path(inode));
+				copy_inode_link(inode, link_name);
+				// printf("(filesys_open) inode path: %s\n", link_name);
+				//strlcpy(link_name, inode_data_symlink_path(inode), length_symlink_path(inode));
 				dir = dir_open_root();
 				if (link_name[0] != '/') {
 					dir = dir_reopen(thread_current()->current_dir);
@@ -360,10 +388,13 @@ struct dir *parsing(struct dir *dir, char *path, char *final_name) {
 	// next_path == NULL인 경우도!! 그냥 return해야함!! dir 상관없이!!
 	char *next_path = strtok_r(NULL, "/", &save);
 	// printf("(parsing) next_path == NULL: %d\n", next_path == NULL);
+
+	// printf("(parsing) check_symlink: %s\n", check_symlink(inode)? "true":"false");
+	// ASSERT(check_symlink(inode));
 	
 	// 여기서의 목적은 file_name만 parsing 해내는 것!
 	while (path_token != NULL) {
-		// printf("(parsing) path_token: %s, next_path: 5x\n", path_token, next_path);
+		// printf("(parsing) path_token: %s, next_path: %s\n", path_token, next_path);
 		if (next_path == NULL) {
 			// 하... 이걸 왜 생각 못했을까. dir은 lookup하기 전에 원래 상태 그대로 반환해야함.
 			break;
@@ -374,6 +405,7 @@ struct dir *parsing(struct dir *dir, char *path, char *final_name) {
 		// printf("inode == NULL: %d\n", inode == NULL);
 		// printf("success_lookup: %d\n", success_lookup); // false가 나옴. lookup이 실패했다는 뜻
 		if (success_lookup == false) {
+			// printf("(parsing) 설마 path_token: %s에서 lookup 실패?\n", path_token);
 			// 따라서, 뒤에서 한 번에 if를 돌려주는게 아니라
 			// inode_is_directory 함수 자체가 오류가 나 버리니,
 			// 여기서 바로 dir = NULL을 해줘야 한다
@@ -381,19 +413,58 @@ struct dir *parsing(struct dir *dir, char *path, char *final_name) {
 			dir = NULL;
 			break;
 		}
+		
+		// printf("(parsing) check_symlink 결과는? %s\n", check_symlink(inode)? "true":"false");
+		// 링크 파일인 경우는 앞서서 한 번 더 돌리면 될 것 같음
+
+		// check_symlink를 먼저 해야함. is_inode_dir 보는 것보다...
+		// directory 먼저하면 당연히 symlink인 경우는 다 날라가겠지 ㅋㅋㅋ
+		if (check_symlink(inode)) {
+			// 아니 대체 왜 inode->data.symlink가 안되는건데 ㅋㅋ
+			// inode의 path를 복사해온다!
+			char *inode_path = (char*)malloc(length_symlink_path(inode) * sizeof(char));
+			copy_inode_link(inode, inode_path);
+			// strlcpy(inode_path, inode_data_symlink_path(inode), length_symlink_path(inode));
+			
+			// inode path 경로에 symlink 뒷부분을 갖다붙이면 됨
+			// ../file 이런 식으로 되어있던 걸 inode path/file 이런 형식으로!
+			strlcat(inode_path, "/", strlen(inode_path) + 2);
+			strlcat(inode_path, next_path, strlen(inode_path) + strlen(next_path) + 1);
+			// 하... inode_path가 잘 안 만들어지고 있었다.
+			// 위의 copy_inode_link까지는 잘 되고 있었는데 (a/link_b -> a/b로 잘 불러와짐)
+			// a/link_b/file을 create해야하는 상황에서, inode_path에 /file이 안 붙여지고 있었음.
+			// strlcat(inode_path, save, strlen(inode_path) + strlen(save) + 1); 라고 적고있었다... 난 븅신
+			dir_close(dir);
+
+			// 그리고 while문 다시 시작해야함!
+			dir = dir_open_root();
+			if (path[0] != '/') {
+				dir = dir_reopen(thread_current()->current_dir);
+			}
+			// printf("(parsing) new inode_path: %s\n", inode_path);
+			strlcpy(path, inode_path, strlen(inode_path) + 1);
+			free(inode_path);
+			path_token = strtok_r(path, "/", &save);
+			next_path = strtok_r(NULL, "/", &save);
+			continue;
+		}
 
 		bool is_inode_dir = inode_is_directory(inode); // 와 이게 문제였다.
 		// inode 자체가 NULL인걸로 dir_lookup에서 나와버렸는데, 그 inode를 가지고
 		// inode_is_directory를 실행하려니까 오류가 걸린 것이다.
 		// printf("is_inode_dir: %d\n", is_inode_dir);
 		if (!(success_lookup && is_inode_dir)) {
+			// printf("(parsing) 설마 path_token: %s에서 inode is dir 실패?\n", path_token);
 			dir_close(dir);
 			inode_close(inode);
 			dir = NULL; // dir이 없는 거니까 dir은 null로 세팅해줘야
 			break;
+	// /*
 		} else {
+			/*
 			// 링크 파일인 경우는 앞서서 한 번 더 돌리면 될 것 같음
 			if (check_symlink(inode)) {
+				printf("(parsing) check_symlink 들어오냐\n");
 				// 아니 대체 왜 inode->data.symlink가 안되는건데 ㅋㅋ
 				// inode의 path를 복사해온다!
 				char *inode_path = (char*)malloc(length_symlink_path(inode) * sizeof(char));
@@ -416,6 +487,7 @@ struct dir *parsing(struct dir *dir, char *path, char *final_name) {
 				path_token = strtok_r(path, "/", &save);
 				continue;
 			}
+			*/
 
 			// printf("(parsing) 여기까지는 가지?\n");
 
@@ -434,6 +506,7 @@ struct dir *parsing(struct dir *dir, char *path, char *final_name) {
 				path_token = next_path;
 				next_path = strtok_r(NULL, "/", &save);
 			}
+		// */
 		}
 	}
 	// return하기 전에, 여기서 final_name을 copy 해줘야 한다.
