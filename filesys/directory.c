@@ -5,6 +5,7 @@
 #include "filesys/filesys.h"
 #include "filesys/inode.h"
 #include "threads/malloc.h"
+#include "threads/thread.h"
 
 /* A directory. */
 struct dir {
@@ -23,11 +24,13 @@ struct dir_entry {
  * given SECTOR.  Returns true if successful, false on failure. */
 bool
 dir_create (disk_sector_t sector, size_t entry_cnt) {
-	bool created = inode_create (sector, entry_cnt * sizeof (struct dir_entry));
+	// printf("(dir_create)\n");
+	bool created = inode_create (sector, entry_cnt * sizeof (struct dir_entry), true);
 	if (created) {
 		struct inode *opened = inode_open(sector);
 		create_directory_inode(opened);
 	}
+	return created; // return값이 이게 안 추가되어있어서.. 
 }
 
 /* Opens and returns the directory for the given INODE, of which
@@ -50,7 +53,11 @@ dir_open (struct inode *inode) {
  * Return true if successful, false on failure. */
 struct dir *
 dir_open_root (void) {
-	return dir_open (inode_open (ROOT_DIR_SECTOR));
+	#ifdef EFILESYS
+		return dir_open(inode_open(cluster_to_sector(ROOT_DIR_SECTOR)));
+	#else
+		return dir_open (inode_open (ROOT_DIR_SECTOR));
+	#endif
 }
 
 /* Opens and returns a new directory for the same inode as DIR.
@@ -141,8 +148,10 @@ dir_add (struct dir *dir, const char *name, disk_sector_t inode_sector) {
 		return false;
 
 	/* Check that NAME is not in use. */
-	if (lookup (dir, name, NULL, NULL))
+	if (lookup (dir, name, NULL, NULL)) {
+		// printf("(dir_add) 설마 lookup 결과가 없...? name: %s\n", name);
 		goto done;
+	}
 
 	/* Set OFS to offset of free slot.
 	 * If there are no free slots, then it will be set to the
@@ -179,6 +188,8 @@ dir_remove (struct dir *dir, const char *name) {
 	ASSERT (dir != NULL);
 	ASSERT (name != NULL);
 
+	//printf("(dir_remove) 들어가?\n");
+
 	/* Find directory entry. */
 	if (!lookup (dir, name, &e, &ofs))
 		goto done;
@@ -187,6 +198,66 @@ dir_remove (struct dir *dir, const char *name) {
 	inode = inode_open (e.inode_sector);
 	if (inode == NULL)
 		goto done;
+
+	// 만약에 dir인 경우,
+	bool is_dir = inode_is_directory(inode);
+	if (is_dir) {
+		//일단 이 directory 아래의 파일이나 subdirectory가 존재하면 안된다
+		struct dir *curr_dir = dir_open(inode);
+
+		//이 directory안에 있는 엔트리들을 찾아보면서 열려있는게 있는지 체크해야한다
+		struct dir_entry temp;
+		size_t dir_entry_size = sizeof(temp);
+		
+		//off_t curr_dir_pos = curr_dir->pos;
+		//NOT_REACHED();
+		while (true) {
+			bool not_all_entry = inode_read_at(inode, &temp, dir_entry_size, curr_dir->pos) < dir_entry_size;
+			//이 directory의 마지막 directory entry까지 검사하는거기 때문에 엔트리 하나 보다 작은 사이즈만 읽을 수 있으면
+			//마지막 엔트리에 도달한거다
+			if (not_all_entry) {
+				//NOT_REACHED();
+				break;
+			}
+			
+			//이제 temp에 현재 찾은 directory의 dir entry를 하나하나씩 읽고 넣어준다
+			//만약 지금 directory안에 entry가 사용되고 있는거면 . 또는 .. 아니면 안된다
+			curr_dir->pos += dir_entry_size;
+			if (temp.in_use) {
+				//printf("temp name: %s", temp.name);
+				//"." 또는 ".." 이외에 파일 또는 디렉토리가 있으면 안된다
+				int cur_dir = strcmp(temp.name, ".");
+				int parent_dir = strcmp(temp.name, "..");
+				if (cur_dir != 0 && parent_dir != 0) {
+					//printf("compare with . is %d", cur_dir);
+					//printf("compare with .. is %d", parent_dir);
+					//NOT_REACHED();
+					//"." 또는 ".."이 둘 다 아닌데 사용되고 있는게 있는 상황이니까 제거하면 안된다
+					dir_close(curr_dir);
+					return false;
+				}
+			}
+		}
+
+		//지금 현재 프로세스에서 사용되고 있는 디렉토리면 안된다
+		struct dir *process_dir = thread_current()->current_dir;
+		if (process_dir != NULL) {
+			//NOT_REACHED();
+			struct inode *process_inode = dir_get_inode(process_dir);
+			if (process_inode == inode) {
+				//현재 사용되고 있는 inode가 같은 디렉토리의 Inode일때는 이 디렉토리를 제거하면 안된다
+				dir_close(curr_dir);
+				return false;
+			}
+		}
+		
+		//만약 이 디렉토리가 두군데 이상 사용되고 있으면 이 디렉토리는 제거할 수 없다
+		if (get_open_count(inode) > 2) {
+			//NOT_REACHED();
+			dir_close(curr_dir);
+			return false;
+		}
+	}
 
 	/* Erase directory entry. */
 	e.in_use = false;
@@ -211,10 +282,23 @@ dir_readdir (struct dir *dir, char name[NAME_MAX + 1]) {
 
 	while (inode_read_at (dir->inode, &e, sizeof e, dir->pos) == sizeof e) {
 		dir->pos += sizeof e;
+		// dir 경로 안에 .나 .. 있으면 그건 pass 해야함
+		// strcmp의 반환 값이 0이면 같다는 것임
+		if (strcmp(e.name, ".") == 0 || strcmp(e.name, "..") == 0) {
+			continue;
+		}
 		if (e.in_use) {
 			strlcpy (name, e.name, NAME_MAX + 1);
 			return true;
 		}
 	}
 	return false;
+}
+
+bool dir_pos (struct dir *dir) {
+	return dir->pos;
+}
+
+void dir_change_pos (struct dir *dir) {
+	dir->pos = 2*sizeof(struct dir_entry);
 }

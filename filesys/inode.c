@@ -17,8 +17,14 @@ struct inode_disk {
 	disk_sector_t start;                /* First data sector. */
 	off_t length;                       /* File size in bytes. */
 	unsigned magic;                     /* Magic number. */
-	uint32_t unused[125];               /* Not used. */
+	// uint32_t unused[125];               /* Not used. */
 	bool directory;			//이 Inode가 파일인지 디렉토리인지
+	bool symlink; 			// 이 inode가 link file인지
+	// disk_sector_t & off_t & unsigned 모두 4바이트
+	// unused는 그냥 안쓰이니까 제외 (처음부터 DISK_SECTOR_SIZE 맞춰주려고 넣은 듯)
+	// bool은 1바이트 => DISK_SECTOR_SIZE = 512바이트이므로
+	// 512-4-4-4-1-1 = 498
+	char symlink_path[498];
 };
 
 /* Returns the number of sectors to allocate for an inode SIZE
@@ -45,6 +51,7 @@ struct inode {
  * POS. */
 static disk_sector_t
 byte_to_sector (const struct inode *inode, off_t pos) {
+	// printf("(byte_to_sector)\n");
 	//해당 inode를 갖고 있는 sector를 반환하는 함수이다
 	//파일은 하나 이상의 섹터에 쪼개져서 저장될 것
 	ASSERT (inode != NULL);
@@ -56,19 +63,27 @@ byte_to_sector (const struct inode *inode, off_t pos) {
 	else
 		return -1;
 	*/
+	// printf("(byte_to_sector) check_symlink: %s\n", check_symlink(inode)? "true":"false");
+	// 지금 symlink인 경우에 inode->data.start가 0이 나오는 것 같다!!
+
 	if (pos < inode->data.length) {
 		//현재 inode가 들어있는 섹터를 가져온다
 		cluster_t pos_clst = sector_to_cluster(inode->data.start);
-		cluster_t clst;
+		//cluster_t clst;
 		//이제 해당 offset pos을 가진 위치로 가서 거기에 담겨있는 value를 찾고 섹터값으로 변환해줘야한다 
 		for (int i = 0; i < (pos / DISK_SECTOR_SIZE); i++) {
-			clst = fat_get(pos_clst);
-			if (clst == 0) {
+			pos_clst = fat_get(pos_clst);
+			if (pos_clst == 0) {
 				return -1;
 			}
-			pos_clst = clst;
+			//pos_clst = clst;
 		}
+		if (pos_clst == EOChain) {
+			return -1;
+		}
+		//printf("cluster num: %d", pos_clst);
 		return cluster_to_sector(pos_clst);
+		//return cluster_to_sector(clst);
 	} else {
 		return -1;
 	}
@@ -90,7 +105,7 @@ inode_init (void) {
  * Returns true if successful.
  * Returns false if memory or disk allocation fails. */
 bool
-inode_create (disk_sector_t sector, off_t length) {
+inode_create (disk_sector_t sector, off_t length, bool directory) {
 	struct inode_disk *disk_inode = NULL;
 	bool success = false;
 
@@ -98,38 +113,56 @@ inode_create (disk_sector_t sector, off_t length) {
 
 	/* If this assertion fails, the inode structure is not exactly
 	 * one sector in size, and you should fix that. */
+	//printf("size of disk_inode: %d", sizeof *disk_inode);
 	ASSERT (sizeof *disk_inode == DISK_SECTOR_SIZE);
 
-	//disk inode를 만들고
 	disk_inode = calloc (1, sizeof *disk_inode);
+
+	//disk inode를 만들고
 	if (disk_inode != NULL) {
 		size_t sectors = bytes_to_sectors (length);
 		disk_inode->length = length;
 		disk_inode->magic = INODE_MAGIC;
+		disk_inode->directory = directory;
+		disk_inode->start = 0;
 		
-		#if FILESYS
+		#ifdef EFILESYS
 		//새로운 chain을 만들어줘야하니까 0으로 입력해서 new chain이 allocate가 되는지 보고 (free한 공간 충분)
-		cluster_t allocate = fat_create_chain(0);
-		if (allocate == 0) {
-			//fat안에 0인 연속적인 free한 공간이 있어야 하니까 0이 나오면 fail to allocate new cluster인거다
-			free(disk_inode);
-			return false;
-		}
-		//FAT table안에서 빈 cluster들을 불러와서 파일 크기에 맞게 클러스터 체인을 만들어준다
-		//이때 실제 값들을 넣어주는게 아닌 흩어진 섹터들을 연결해주는 작업만 한다!
-		cluster_t new_clst = allocate;
-		while (sectors > 0) {
-			new_clst = fat_create_chain(new_clst);
-			if (new_clst == 0) {
-				//chain에 cluster를 추가하는게 실패한거니까 free하고 revmoe해줘야한다
-				fat_remove_chain(allocate, 0);
+		cluster_t allocate;
+		size_t count;
+		if (sectors == 0) {
+			disk_write(filesys_disk, sector, disk_inode);
+			success = true;
+		} else {
+			//새로운 클러스터 체인을 일단 생성해줘야한다
+			allocate = fat_create_chain(0);
+			if (allocate == 0) {
+				//fat안에 0인 연속적인 free한 공간이 있어야 하니까 0이 나오면 fail to allocate new cluster인거다
+				//fat_remove_chain(allocate, 0);
+				free(disk_inode);
 				return false;
 			}
 
-			sectors--;
+			//FAT table안에서 빈 cluster들을 불러와서 파일 크기에 맞게 클러스터 체인을 만들어준다
+			//이때 실제 값들을 넣어주는게 아닌 흩어진 섹터들을 연결해주는 작업만 한다!
+			cluster_t new_clst = allocate;
+			count = sectors;
+			while (count > 0) {
+				new_clst = fat_create_chain(new_clst);
+				if (new_clst == 0) {
+					//chain에 cluster를 추가하는게 실패한거니까 free하고 revmoe해줘야한다
+					// printf("(inode_create) 설마 chain에 clst 추가 실패함?\n");
+					fat_remove_chain(allocate, 0);
+					free(disk_inode);
+					return false;
+				}
+
+				//allocate = new_clst;
+				count--;
+			}
+			//여기까지 나온거면 chain이 다 성공적으로 만들어진거니까 이때 처음 만든 sector를 start로 지정해준다
+			disk_inode->start = cluster_to_sector(allocate);
 		}
-		//여기까지 나온거면 chain이 다 성공적으로 만들어진거니까 이때 처음 만든 sector를 start로 지정해준다
-		disk_inode->start = cluster_to_sector(allocate);
 
 		//이제 FAT 테이블에서는 다음 클러스터 번호가 잘 적혀있을거다
 		//이제 또 하나하나씩 들어가서 disk_write을 호출해 클러스터에 해당 파일을 써줘야한다 
@@ -137,13 +170,16 @@ inode_create (disk_sector_t sector, off_t length) {
 		if (sectors > 0) {
 			static char zeros[DISK_SECTOR_SIZE]; 
 			cluster_t for_write = allocate;
-			while (sectors > 0) {
+			while (count > 0) {
 				disk_write(filesys_disk, cluster_to_sector(for_write), zeros);
 				//FAT안에 다음 cluster의 위치가 담겨있기때문에 이렇게 다음 cluster를 찾는다
 				for_write = fat_get(for_write);
+
+				count--;
 			}
 		}
 		success = true;
+		// printf("(inode_create)\n");
 		#else
 		if (free_map_allocate (sectors, &disk_inode->start)) {
 			disk_write (filesys_disk, sector, disk_inode);
@@ -156,8 +192,9 @@ inode_create (disk_sector_t sector, off_t length) {
 			}
 			success = true; 
 		} 
-		#endif
+		
 		free (disk_inode);
+		#endif
 	}
 	return success;
 }
@@ -176,7 +213,9 @@ inode_open (disk_sector_t sector) {
 			e = list_next (e)) {
 		inode = list_entry (e, struct inode, elem);
 		if (inode->sector == sector) {
+			//printf("여기 들어가?\n");
 			inode_reopen (inode);
+			//printf("inode != NULL? %d\n", inode != NULL);
 			return inode; 
 		}
 	}
@@ -187,18 +226,22 @@ inode_open (disk_sector_t sector) {
 		return NULL;
 
 	/* Initialize. */
-	list_push_front (&open_inodes, &inode->elem);
 	inode->sector = sector;
 	inode->open_cnt = 1;
 	inode->deny_write_cnt = 0;
 	inode->removed = false;
+	
 	disk_read (filesys_disk, inode->sector, &inode->data);
+	
+	//disk_read(filesys_disk, cluster_to_sector(inode->sector), &inode->data);
+	list_push_front (&open_inodes, &inode->elem);
 	return inode;
 }
 
 /* Reopens and returns INODE. */
 struct inode *
 inode_reopen (struct inode *inode) {
+	// printf("(inode_reopen) inode != NULL : %d\n", inode != NULL);
 	if (inode != NULL)
 		inode->open_cnt++;
 	return inode;
@@ -219,6 +262,9 @@ inode_close (struct inode *inode) {
 	if (inode == NULL)
 		return;
 
+	#ifdef EFILESYS
+		disk_write (filesys_disk, inode->sector, &inode->data);
+	#endif
 	/* Release resources if this was the last opener. */
 	if (--inode->open_cnt == 0) {
 		/* Remove from inode list and release lock. */
@@ -226,8 +272,9 @@ inode_close (struct inode *inode) {
 
 		/* Deallocate blocks if removed. */
 		if (inode->removed) {
-			#ifdef FILESYS
+			#ifdef EFILESYS
 				fat_remove_chain(sector_to_cluster(inode->sector), 0);
+				//fat_remove_chain(sector_to_cluster(inode->data.start), 0);
 			#else
 				free_map_release (inode->sector, 1);
 				free_map_release (inode->data.start,
@@ -273,6 +320,7 @@ inode_read_at (struct inode *inode, void *buffer_, off_t size, off_t offset) {
 
 		if (sector_ofs == 0 && chunk_size == DISK_SECTOR_SIZE) {
 			/* Read full sector directly into caller's buffer. */
+			//printf("sector index: %d", sector_idx);
 			disk_read (filesys_disk, sector_idx, buffer + bytes_read); 
 		} else {
 			/* Read sector into bounce buffer, then partially copy
@@ -282,6 +330,7 @@ inode_read_at (struct inode *inode, void *buffer_, off_t size, off_t offset) {
 				if (bounce == NULL)
 					break;
 			}
+			//printf("sector index num: %d", sector_idx);
 			disk_read (filesys_disk, sector_idx, bounce);
 			memcpy (buffer + bytes_read, bounce + sector_ofs, chunk_size);
 		}
@@ -308,43 +357,65 @@ inode_write_at (struct inode *inode, const void *buffer_, off_t size,
 	off_t bytes_written = 0;
 	uint8_t *bounce = NULL;
 
+	// printf("(inode_write_at) inode->data.length: %d\n", inode->data.length);
+	// printf("(inode_write_at) size + offset: %d\n", size+offset);
+
 	if (inode->deny_write_cnt)
 		return 0;
 
+	disk_sector_t sector_idx = byte_to_sector (inode, offset + size);;
+	if (sector_idx == -1) {
+		//offset에 inode가 data를 가지고 있지 않은 경우이기 때문에 file을 늘려줘야한다
+		int position = offset + size;
+		//inode->data.length는 파일 사이즈 in bytes
+		int start = (inode->data.length + DISK_SECTOR_SIZE - 1) / (DISK_SECTOR_SIZE * SECTORS_PER_CLUSTER);
+		int end = (position + DISK_SECTOR_SIZE - 1) / (DISK_SECTOR_SIZE * SECTORS_PER_CLUSTER);
+		
+		cluster_t new_chain;
+		if (inode->data.length == 0) {
+			//file growth이 필요한거기 때문에 새로운 chain을 생성해줘야한다
+			new_chain = fat_create_chain(0);
+			if (new_chain == 0) {
+				//NOT_REACHED();
+				//chain이 만들어지지 않으면 file growth가 안되고 결국 실제로 데이터가 쓰여지지 않으니까 바로 0으로 반환시킨다
+				// printf("(inode_write_at) fat_create_chain이 error인 경우\n");
+				return 0;
+			} else {
+				//NOT_REACHED();
+				//inode에 정보를 업데이트 해줘야한다
+				inode->data.start = cluster_to_sector(new_chain);
+			}
+		} else {
+			// printf("(inode_write_at) inode->data.symlink_path: %s\n", inode->data.symlink_path);
+			//NOT_REACHED();
+			//이미 데이터 섹션이 있는 경우이기 때문에 그냥 체인을 연결해준다
+			new_chain = sector_to_cluster(inode->data.start);
+			//cluster_t val = fat_get(new_chain);
+			while (fat_get(new_chain) != EOChain) {
+				new_chain = fat_get(new_chain);
+			}
+		}
+		
+		//NOT_REACHED();
+		cluster_t chain = new_chain;
+		for (int i = start; i < end; i++) {
+			chain = fat_create_chain(chain);
+			if (chain == 0) {
+				// printf("(inode_write_at) 연속 chain 만들기가 fail인 경우\n");
+				// if (fat_get(new_chain) != EOChain)
+				// 	fat_remove_chain(fat_get(new_chain), new_chain);
+				return 0;
+			}
+		}
+		
+		//만약 여기까지 잘 나오면 chain이 우리가 원하는 만큼까지 커지는게 성공한거니까
+		//그럼 inode의 데이터에 length를 우리가 쓰고 싶었던 크기를 넣어주면 된다
+		inode->data.length = position;
+		disk_write(filesys_disk, inode->sector, &inode->data);
+	}
+
 	while (size > 0) {
 		/* Sector to write, starting byte offset within sector. */
-		disk_sector_t sector_idx = byte_to_sector (inode, offset + size);
-		if (sector_idx == -1) {
-			//offset에 inode가 data를 가지고 있지 않은 경우이기 때문에 file을 늘려줘야한다
-			int position = offset + size;
-			//inode->data.length는 파일 사이즈 in bytes
-			int start = (inode->data.length + DISK_SECTOR_SIZE - 1) / DISK_SECTOR_SIZE;
-			int end = (position + DISK_SECTOR_SIZE - 1) / DISK_SECTOR_SIZE;
-			
-			cluster_t new_chain;
-			if (inode->data.length == 0) {
-				//file growth이 필요한거기 때문에 새로운 chain을 생성해줘야한다
-				new_chain = fat_create_chain(0);
-				if (new_chain == 0) {
-					//chain이 만들어지지 않으면 file growth가 안되고 결국 실제로 데이터가 쓰여지지 않으니까 바로 0으로 반환시킨다
-					return 0;
-				} else {
-					//inode에 정보를 업데이트 해줘야한다
-					inode->data.start = cluster_to_sector(new_chain);
-				}
-			}
-			
-			cluster_t chain = new_chain;
-			for (int i = start; i < end; i++) {
-				chain = fat_create_chain(chain);
-				if (chain == 0) {
-					return 0;
-				}
-			}
-			//만약 여기까지 잘 나오면 chain이 우리가 원하는 만큼까지 커지는게 성공한거니까
-			//그럼 inode의 데이터에 length를 우리가 쓰고 싶었던 크기를 넣어주면 된다
-			inode->data.length = position;
-		}
 		sector_idx = byte_to_sector(inode, offset);
 		int sector_ofs = offset % DISK_SECTOR_SIZE;
 
@@ -430,4 +501,93 @@ create_file_inode (struct inode *inode) {
 bool
 inode_is_directory (const struct inode *inode) {
 	return inode->data.directory;
+}
+
+bool
+create_link_inode (disk_sector_t sector, char *target) {
+
+	/*
+	struct inode_disk *disk_for_inode = NULL;
+	disk_for_inode = calloc(1, sizeof *disk_for_inode);
+	
+	// calloc으로 0으로 채워줬으면 이제 NULL이 아닐 것임
+	ASSERT(disk_for_inode != NULL);
+
+	disk_for_inode->length = strlen(target) + 1;
+	disk_for_inode->magic = INODE_MAGIC;
+	disk_for_inode->directory = false;
+	disk_for_inode->symlink = true;
+	strlcpy(disk_for_inode->symlink_path, target, strlen(target) + 1);
+	// printf("(create_link_indoe) symlink_path: %s\n", disk_for_inode->symlink_path);
+
+	cluster_t inode_cluster = fat_create_chain(0);
+	if (inode_cluster == 0) {
+		// 위에 채정이가 inode_create에 적어둔 것처럼 0이면 안만들어졌다는 뜻
+		free(disk_for_inode);
+		return false;
+	}
+	// chain이 잘 만들어졌으면,
+	disk_for_inode->start = cluster_to_sector(inode_cluster);
+	disk_write(filesys_disk, cluster_to_sector(inode_cluster), disk_for_inode);
+
+	return true;
+	*/
+
+	// 이 함수 쓰기 전에 이미, inode_create로 만들었으므로 굳이 여기서도 만들 필요가 없었음.
+	// 그렇기에, 이미 만들어진 inode의 속성을 symlink에 맞게 변화시켜주는 과정만 필요함.
+
+	if (sector == NULL) {
+		return false;
+	}
+
+	struct inode *inode = inode_open(sector);
+	if (inode == NULL) {
+		inode_close(inode);
+		return false;
+	}
+
+	//printf("(create_link_inode) strlen(target)+1: %d\n", strlen(target)+1);
+	// inode->data.length = strlen(target) + 1;
+	// inode->data.magic = INODE_MAGIC;
+	// inode->data.directory = false;
+	inode->data.symlink = true;
+	// printf("(create_link_inode) target %s is %s\n", target, check_symlink(inode)? "symlink":"not symlink");
+	strlcpy(inode->data.symlink_path, target, strlen(target) + 1);
+	// printf("(create_link_inode) inode->data.symlink_path: %s\n", inode->data.symlink_path);
+	inode_close(inode);
+
+	return true;
+}
+
+bool check_symlink(struct inode *inode) {
+	// 아니 왜 syscall.c에서 inode->data 이게 안됨 에러가 뜸 그래서 여기에다가...
+	return inode->data.symlink;
+}
+
+char copy_inode_link (struct inode *inode, char *path) {
+	char *inode_link = (char*)malloc((strlen(inode->data.symlink_path) + 1)*sizeof(char));
+	strlcpy(inode_link, inode->data.symlink_path, strlen(inode->data.symlink_path) + 1);
+	strlcpy(path, inode_link, strlen(inode_link) + 1);
+	free(inode_link);
+
+	return path;
+}
+
+char inode_data_symlink_path (struct inode *inode) {
+	// printf("(inode_data_symlink_path) inode->data.symlink_path: %s\n", inode->data.symlink_path);
+	return inode->data.symlink_path;
+}
+
+int length_symlink_path (struct inode *inode) {
+	// printf("(length_symlink_path) : %d\n", strlen(inode->data.symlink_path) + 1);
+	return strlen(inode->data.symlink_path) + 1;
+}
+
+bool is_file_dir (struct file *file) {
+	struct inode *inode = get_file_inode(file);
+	return inode->data.directory;
+}
+
+int get_open_count (struct inode *inode) {
+	return inode->open_cnt;
 }

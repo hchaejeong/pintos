@@ -104,9 +104,12 @@ fsutil_put (char **argv) {
 	if (size < 0)
 		PANIC ("%s: invalid file size %d", file_name, size);
 
+	// printf("(fsutil_put) file_name: %s\n", file_name);
+	// printf("(fsutil_put) size: %d\n", size);
 	/* Create destination file. */
 	if (!filesys_create (file_name, size))
 		PANIC ("%s: create failed", file_name);
+	// printf("(fsutil_put) 여기가 문제구나!\n");
 	dst = filesys_open (file_name);
 	if (dst == NULL)
 		PANIC ("%s: open failed", file_name);

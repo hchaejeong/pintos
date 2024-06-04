@@ -18,6 +18,10 @@
 #include "threads/init.h"
 #include "devices/input.h"
 #include "vm/vm.h"
+// project 4
+#include "filesys/directory.h"
+#include "filesys/inode.h"
+#include "filesys/fat.h"
 
 struct lock file_lock;
 
@@ -43,6 +47,12 @@ int exec (const char *file);
 int wait(tid_t pid);
 void *mmap(void *addr, size_t length, int writable, int fd, off_t offset);
 void munmap(void *addr);
+bool chdir (const char *dir);
+bool mkdir (const char *dir);
+bool readdir (int fd, char *name);
+bool isdir (int fd);
+int inumber (int fd);
+int symlink (const char *target, const char *linkpath);
 
 /* System call.
  *
@@ -150,6 +160,25 @@ syscall_handler (struct intr_frame *f UNUSED) {
 		case (SYS_MUNMAP):
 			munmap((void *) f->R.rdi);
 			break;
+		// project 4 부분의 system call!
+		case (SYS_CHDIR):
+			f->R.rax = chdir((const char *) f->R.rdi);
+			break;
+		case (SYS_MKDIR):
+			f->R.rax = mkdir((const char *) f->R.rdi);
+			break;
+		case (SYS_READDIR):
+			f->R.rax = readdir((int) f->R.rdi, (char *) f->R.rsi);
+			break;
+		case (SYS_ISDIR):
+			f->R.rax = isdir((int) f->R.rdi);
+			break;
+		case (SYS_INUMBER):
+			f->R.rax = inumber((int) f->R.rdi);
+			break;
+		case (SYS_SYMLINK):
+			f->R.rax = symlink((const char *) f->R.rdi, (const char *) f->R.rsi);
+			break;
 		default:
 			printf ("system call!\n");
 			thread_exit ();
@@ -249,6 +278,7 @@ remove (const char *file) {
 //or -1 if the file could not be opened.
 int
 open (const char * file) {
+	// printf("(open) 여기로 들어가나?\n");
 	if (file == NULL) {
 		return -1;
 	}
@@ -264,10 +294,12 @@ open (const char * file) {
 	lock_acquire(&file_lock);
 	struct file *actual_file = filesys_open(file);
 	lock_release(&file_lock);
+	// printf("(open) filesys_open이 안되는 것임?\n");
 	
 	if (!actual_file) {		//파일을 열지 못한 경우
 		//free (fd_elem);		//할당한 공간을 사용하지 않았기 때문에 다시 free해줘서 다른 애들이 쓸 수 있게 해준다.
 		//lock_release(&file_lock);
+		// printf("(open) file을 열지 못한 경우야?\n");
 		return -1;
 	}
 
@@ -375,8 +407,10 @@ read (int fd, void *buffer, unsigned size) {
 		if (curr_file == NULL) {
 			return -1;
 		}
+		// printf("(read) 이 sector이 0인 inode는 어디에서 왔는가\n");
 		lock_acquire(&file_lock);
 		//struct file *curr_file = fd_elem->current_file;
+		//printf("buffer: %s", buffer);
 		read_bytes = file_read(curr_file, buffer, size);
 		lock_release(&file_lock);
 	}
@@ -419,6 +453,12 @@ write (int fd, const void *buffer, unsigned size) {
 		} else {
 			lock_acquire(&file_lock);
 			struct file *curr_file = fd_elem->current_file;
+			//printf("(write) 하면 안되는데 해서 그런거?\n");
+			if (is_file_dir(curr_file)) {
+				// dir인 경우에는 write가 불가하다!! 따라서 return -1을 해야함!!!
+				lock_release(&file_lock);
+				return -1;
+			}
 			write_bytes = (int) file_write(curr_file, buffer, size);	//off_t 타입으로 나와니까 int으로 만들어주고 반환
 			lock_release(&file_lock);
 		}
@@ -683,4 +723,547 @@ void munmap(void *addr) {
 
 	// 그냥 여기서는 아무 상관없이, do_munmap으로만 가면 되는듯?
 	do_munmap(addr);
+}
+
+
+
+/* project 4 */
+
+bool chdir (const char *dir) {
+	/* process의 현재 작업 directory를 dir로 변경하면 됨.
+	dir은 상대적, 절대적 모두 가능
+	성공하면 true, 실패하면 false 반환 */
+
+	check_address(dir);
+
+	bool success = true;
+
+	// 먼저 dir이 NULL이면 안되겠지 ㅇㅇ
+	if (dir == NULL) {
+		success = false;
+	}
+
+	struct dir *real_dir = dir_open_root(); // 일단 기본이 되는 root 경로로 열어두고 시작
+	if (dir[0] != '/') {
+		// 그런데 dir이 상대 경로면 현재 thread의 dir로 세팅해둬야 함
+		// '/'로 시작하면 절대 경로, 아니면 상대 경로
+		// 그냥 open ㄴㄴ. reopen함으로써 서로 간섭 안나게 해야함
+		real_dir = dir_reopen(thread_current()->current_dir);
+	}
+
+	// dir도 복제본을 만들어둬야 함. 안 그러면 저 dir도 망가진다 볼 수 있음
+	char *copy_dir = (char *)malloc((strlen(dir)+1) * sizeof(char));
+	strlcpy(copy_dir, dir, strlen(dir) + 1);
+
+	// 채정이가 process.c의 process_exec에서 한 것처럼 나누면 됨
+	char * save;
+	char * dir_token = strtok_r(copy_dir, "/", &save);
+	struct inode *inode = NULL;
+	while (dir_token != NULL) {
+		// 주어진 dir 안에 token 이름의 파일이 있는지 탐색, 있으면 inode 정보 저장
+		bool success_lookup = dir_lookup(real_dir, dir_token, &inode);
+		if (success_lookup == false) {
+			// inode 자체가 NULL인걸로 dir_lookup에서 나와버렸는데, 그 inode를 가지고
+			// inode_is_directory를 실행하려니까 오류가 걸린 것이다.
+			// 따라서, 뒤에서 한 번에 if를 돌려주는게 아니라
+			// inode_is_directory 함수 자체가 오류가 나 버리니,
+			// 여기서 바로 dir = NULL을 해줘야 한다
+			dir_close(real_dir);
+			success = false;
+			break;
+		}
+		// 이렇게 생긴 inode가 directory인지 판단
+		bool is_inode_dir = inode_is_directory(inode); // 채정이가 만들어 둔 inode_is_directory 함수를 쓰면 된다
+		if (!(success_lookup && is_inode_dir)) {
+			// lookup한 결과가 없거나, inode가 directory가 아니면 (file이면) return false임
+			dir_close(real_dir); // 일단 open한 dir은 닫아야지
+			success = false;
+			break; // while문에서 바로 나와서 return false하면 됨
+		} else {
+			dir_close(real_dir); // 기존 dir 정보는 닫고
+			real_dir = dir_open(inode); // inode에 이제 dir이 들어가 있을테니까, 그 dir 정보를 열기
+			// 이 과정을 dir 끝까지 돌리는거지!
+			dir_token = strtok_r(NULL, "/", &save);
+		}
+	}
+
+	free(copy_dir);
+
+	if (success) {
+		// 위 과정을 돌면서 아무 문제가 없었으면
+		// 이제 실제 thread의 dir을 바꿔주는 작업을 하면 됨
+		// real_dir에 저장해줘야 할 dir이 저장이 되어있음
+		// printf("혹시 여기에 안 들어가니?\n");
+		// printf("(chdir) real dir: 0x%x, curr dir: 0x%x\n", real_dir, thread_current()->current_dir);
+		dir_close(thread_current()->current_dir);
+		thread_current()->current_dir = real_dir;
+		return true;
+	} else {
+		// 위 과정을 돌면서 success가 false가 되면 return false
+		return false;
+	}
+}
+
+bool mkdir (const char *dir) {
+	//printf("(mkdir) dir: %s\n", dir);
+	/* 상대적, 절대적 모두 가능한 dir이라는 directory를 만듦.
+	성공하면 true, 실패하면 false 반환.
+	dir이 이미 존재하거나 & 그 앞의 경로가 없는 경우에는 false
+	mkdir("/a/b/c")는 /a/b가 이미 exist하고 /a/b/c가 없는 경우에만 성공한다는 것 */
+
+	if (dir == NULL || strlen(dir) == 0) {
+		return false;
+	}
+	// 여기는 chdir과 같음. 경로 초기 세팅
+	struct dir *real_dir = dir_open_root(); // 일단 기본이 되는 root 경로로 열어두고 시작
+	if (dir[0] != '/') {
+		// 그런데 dir이 상대 경로면 현재 thread의 dir로 세팅해둬야 함
+		// '/'로 시작하면 절대 경로, 아니면 상대 경로
+		// 그냥 open ㄴㄴ. reopen함으로써 서로 간섭 안나게 해야함
+		// printf("(mkdir) dir name: %s, curr dir: 0x%x\n", dir, thread_current()->current_dir);
+		real_dir = dir_reopen(thread_current()->current_dir);
+	}
+
+	// chdir이랑 일단은 같은 방법으로 parse해서 돌리기
+	char *copy_dir = (char *)malloc((strlen(dir)+1) * sizeof(char));
+	strlcpy(copy_dir, dir, strlen(dir) + 1);
+
+	char *save;
+	char *dir_token = strtok_r(copy_dir, "/", &save);
+	struct inode *inode = NULL;
+
+	// 경로의 마지막은 file name임. 이걸 빼내와야 함. 일단 malloc으로 공간 만들어주기
+	char *file_name = (char *)malloc((strlen(dir)+1) * sizeof(char));
+	if (dir_token == NULL) {
+		strlcpy(file_name, ".", 2); // "/"인 경우에는, file_name은 .이 되어야 함
+	}
+
+	// next_path == NULL인 경우도!! 그냥 return해야함!! dir 상관없이!!
+	char *next_path = strtok_r(NULL, "/", &save);
+	// 여기서의 목적은 file_name만 parsing 해내는 것!
+	while (dir_token != NULL) {
+		if (next_path == NULL) {
+			// 하... 이걸 왜 생각 못했을까. dir은 lookup하기 전에 원래 상태 그대로 반환해야함.
+			break;
+		}
+		bool success_lookup = dir_lookup(real_dir, dir_token, &inode);
+		if (success_lookup == false) {
+			// inode 자체가 NULL인걸로 dir_lookup에서 나와버렸는데, 그 inode를 가지고
+			// inode_is_directory를 실행하려니까 오류가 걸린 것이다.
+			// 따라서, 뒤에서 한 번에 if를 돌려주는게 아니라
+			// inode_is_directory 함수 자체가 오류가 나 버리니,
+			// 여기서 바로 dir = NULL을 해줘야 한다
+			dir_close(real_dir);
+			real_dir = NULL;
+			break;
+		}
+
+		// 링크 파일인 경우는 앞서서 한 번 더 돌리면 될 것 같음
+		// check_symlink를 먼저 돌려야 하는 이유는 filesys.c의 parsing에 적혀있음...
+		if (check_symlink(inode)) {
+			// printf("(mkdir) 설마 symlink에는 안 들어가지?\n");
+			// 아니 대체 왜 inode->data.symlink가 안되는건데 ㅋㅋ
+			// inode의 path를 복사해온다!
+			char *inode_path = (char*)malloc(length_symlink_path(inode) * sizeof(char));
+			strlcpy(inode_path, inode_data_symlink_path(inode), length_symlink_path(inode));
+			
+			// inode path 경로에 symlink 뒷부분을 갖다붙이면 됨
+			// ../file 이런 식으로 되어있던 걸 inode path/file 이런 형식으로!
+			strlcat(inode_path, "/", strlen(inode_path) + 2);
+			// strlcat(inode_path, save, strlen(inode_path) + strlen(save) + 1);
+			strlcat(inode_path, next_path, strlen(inode_path) + strlen(next_path) + 1); // 이걸로 바꿔줘야
+
+			dir_close(real_dir);
+
+			// 그리고 while문 다시 시작해야함!
+			real_dir = dir_open_root();
+			if (dir[0] != '/') {
+				real_dir = dir_reopen(thread_current()->current_dir);
+			}
+			strlcpy(copy_dir, inode_path, strlen(inode_path) + 1);
+			free(inode_path);
+			dir_token = strtok_r(copy_dir, "/", &save);
+			continue;
+		}
+
+		bool is_inode_dir = inode_is_directory(inode);
+		// printf("is_inode_dir: %d\n", is_inode_dir);
+		if (!(success_lookup && is_inode_dir)) {
+			// printf("(mkdir) 설마... inode_is_dir이 실패한거야?\n");
+			dir_close(real_dir);
+			//NOT_REACHED();
+			//inode_close(inode);
+			real_dir = NULL; // dir이 없는 거니까 dir은 null로 세팅해줘야
+			break;
+		// /*
+		} else {
+			/*
+			// 링크 파일인 경우는 앞서서 한 번 더 돌리면 될 것 같음
+			if (check_symlink(inode)) {
+				// printf("(mkdir) 설마 symlink에는 안 들어가지?\n");
+				// 아니 대체 왜 inode->data.symlink가 안되는건데 ㅋㅋ
+				// inode의 path를 복사해온다!
+				char *inode_path = (char*)malloc(length_symlink_path(inode) * sizeof(char));
+				strlcpy(inode_path, inode_data_symlink_path(inode), length_symlink_path(inode));
+				
+				// inode path 경로에 symlink 뒷부분을 갖다붙이면 됨
+				// ../file 이런 식으로 되어있던 걸 inode path/file 이런 형식으로!
+				strlcat(inode_path, "/", strlen(inode_path) + 2);
+				// strlcat(inode_path, save, strlen(inode_path) + strlen(save) + 1);
+				strlcat(inode_path, next_path, strlen(inode_path) + strlen(next_path) + 1); // 이걸로 바꿔줘야
+
+				dir_close(real_dir);
+
+				// 그리고 while문 다시 시작해야함!
+				real_dir = dir_open_root();
+				if (dir[0] != '/') {
+					real_dir = dir_reopen(thread_current()->current_dir);
+				}
+				strlcpy(copy_dir, inode_path, strlen(inode_path) + 1);
+				free(inode_path);
+				dir_token = strtok_r(copy_dir, "/", &save);
+				continue;
+			}
+			*/
+
+			dir_close(real_dir);
+			real_dir = dir_open(inode);
+			// printf("(mkdir) real_dir: 0x%x\n", real_dir);
+			// 근데 여기서, 경로의 마지막은 file의 이름이므로 그걸 저장해야함
+			// char *check_next = strtok_r(NULL, "/", &save);
+			// if (check_next == NULL) {
+			if (next_path == NULL) {
+				// file_name에 file name 복사해두기!
+				//strlcpy(file_name, dir_token, strlen(dir_token) + 1);
+				break;
+			} else {
+				dir_token = next_path;
+				next_path = strtok_r(NULL, "/", &save);
+			}
+		// */
+		}
+	}
+
+	strlcpy(file_name, dir_token, strlen(dir_token) + 1);
+	// printf("(mkdir) file_name: %s\n", file_name);
+
+	// 위에서 다 돌리고, 현재 값 가지고 lookup을 해봐야 함
+	bool lookup_success = dir_lookup(real_dir, file_name, &inode);
+	// printf("(mkdir) inode가 null인가? %s\n", inode == NULL? "true":"false");
+
+
+	// 새로운 chain을 만들어서 inode sector 번호를 받아야 함
+	cluster_t inode_sector_num = fat_create_chain(0);
+	// dir이 NULL이면 당연히 error
+	if (real_dir == NULL) { goto error; }
+	
+	// 이렇게 만들어진 sector에 위에서 받은 file_name의 dir을 만들어야 함. 안 만들어지면 당연히 error
+	// bool create_dir = dir_create(inode_sector_num, 16);
+	bool create_dir = dir_create(cluster_to_sector(inode_sector_num), 0);
+	if (!create_dir) { goto error; }
+
+	// dir에 file_name entry를 추가해줘야 함. 잘 안되면 당연히 goto error
+	bool add_file_name = dir_add(real_dir, file_name, cluster_to_sector(inode_sector_num));
+	if (!add_file_name) { goto error; }
+
+	/*
+	// 그리고, 한 번 더 마지막 file_name으로 lookup해서 안나오면 return false임
+	struct inode *check_inode = NULL;
+	bool check_lookup = dir_lookup(real_dir, file_name, &check_inode);
+	// printf("(mkdir) check_lookup: %d\n", check_lookup);
+	if (!check_lookup) { goto error; }
+	*/
+
+	
+	// gitbook에 적힌 대로, Unix의 특수 파일 이름을 나타내는 "."랑 ".."도 넣어줘야함
+	//struct dir *check_dir = dir_open(check_inode);
+	struct dir *check_dir = dir_open(inode_open(cluster_to_sector(inode_sector_num)));
+	// printf("(mkdir) real dir: 0x%x, check_dir: 0x%x\n", real_dir, check_dir);
+	bool add_dot = dir_add(check_dir, ".", cluster_to_sector(inode_sector_num));
+	bool add_dot_dot = dir_add(check_dir, "..", inode_get_inumber(dir_get_inode(real_dir)));
+	if (!(add_dot && add_dot_dot)) {
+		dir_close(check_dir);
+		goto error;
+	}
+	
+
+	dir_close(real_dir);
+	dir_close(check_dir);
+	free(copy_dir);
+	free(file_name);
+
+	return true;
+error:
+	if (inode_sector_num != 0) {
+		fat_remove_chain(inode_sector_num, 0);
+	}
+	dir_close(real_dir);
+	free(copy_dir);
+	free(file_name);
+	return false;
+}
+
+bool readdir (int fd, char *name) {
+
+	check_address(name);
+
+	bool check = true;
+	struct file *file = NULL;
+
+	if (fd == NULL || name == NULL) {
+		check = false;
+	} else {
+		struct fd_structure* fd_elem = find_by_fd_index(fd);
+		if (fd_elem == NULL) {
+			check = false;
+		} else {
+			file = fd_elem->current_file;
+			if (file == NULL) {
+				check = false;
+			} else {
+				// inode가 dir이면 true, 아니면 false
+				check = inode_is_directory(file_get_inode(file));
+			}
+		}
+	}
+	
+	if (check) {
+		struct dir *file_pointer = file; // file을 가리키는 pointer을 dir 형태로 저장
+		if (dir_pos(file_pointer) == 0) {
+			dir_change_pos(file_pointer);
+		}
+		return dir_readdir(file_pointer, name);
+	} else {
+		return false;
+	}
+}
+
+bool isdir (int fd) {
+	/* fd가 directory를 나타내면 true, 그냥 file을 나타내면 false */
+	struct fd_structure* fd_elem = find_by_fd_index(fd);
+	if (fd_elem == NULL) {
+		return false;
+	} else {
+		struct file *file = fd_elem->current_file;
+		if (file == NULL) {
+			return false;
+		} else {
+			return inode_is_directory(file_get_inode(file));
+		}
+	}
+}
+
+int inumber (int fd) {
+	/* file 또는 dir을 표현하는 fd의 inode number을 반환
+	inode number은 file이나 directory를 지속적으로 식별함
+	file이 존재하는 동안은 고유함.
+	pintos에서는 inode의 sector num이 inode num으로 사용되면 됨*/
+	struct fd_structure* fd_elem = find_by_fd_index(fd);
+		if (fd_elem == NULL) {
+		return 0;
+	} else {
+		struct file *file = fd_elem->current_file;
+		if (file == NULL) {
+			return 0;
+		} else {
+			return inode_get_inumber(file_get_inode(file));
+		}
+	}
+}
+
+int symlink (const char *target, const char *linkpath) {
+	/* soft link임.
+	다른 file 또는 directory를 참조하는 pseudo file 개체임.
+	/
+	├── a
+	│   ├── link1 -> /file
+	│   │
+	│   └── link2 -> ../file
+	└── file
+	여기서 link1은 절대 경로이고 link2는 상대 경로이며,
+	link1과 link2 모두 /file을 읽는 것과 같음 */
+
+	
+	// mkdir에서 썼던 parsing 코드를 들고와야함
+	// printf("(symlink) target: %s, linkpath: %s\n", target, linkpath);
+
+	if (linkpath == NULL || strlen(linkpath) == 0) {
+		return false;
+	}
+	
+	struct dir *real_dir = dir_open_root();
+	if (linkpath[0] != '/') {
+		real_dir = dir_reopen(thread_current()->current_dir);
+	}
+
+	char *copy_target = (char *)malloc((strlen(target) + 1) * sizeof(char));
+	strlcpy(copy_target, target, strlen(target)+1);
+
+	char *copy_linkpath = (char *)malloc((strlen(linkpath)+1) * sizeof(char));
+	strlcpy(copy_linkpath, linkpath, strlen(linkpath) + 1);
+
+	// printf("(symlink) copy_target: %s, copy_linkpath: %s\n", copy_target, copy_linkpath);
+
+	char *save;
+	char *linkpath_token = strtok_r(copy_linkpath, "/", &save);
+	struct inode *inode = NULL;
+
+	char *file_name = (char *)malloc((strlen(linkpath)+1) * sizeof(char));
+	if (linkpath_token == NULL) {
+		strlcpy(file_name, ".", 2);
+	}
+
+	char *next_path = strtok_r(NULL, "/", &save);
+	
+	// 여기서의 목적은 file_name만 parsing 해내는 것!
+	while (linkpath_token != NULL) {
+		// printf("(symlink) linkpath_token: %s, next_path: %s\n", linkpath_token, next_path);
+		if (next_path == NULL) {
+			// 하... 이걸 왜 생각 못했을까. dir은 lookup하기 전에 원래 상태 그대로 반환해야함.
+			break;
+		}
+		bool success_lookup = dir_lookup(real_dir, linkpath_token, &inode);
+		if (success_lookup == false) {
+			// inode 자체가 NULL인걸로 dir_lookup에서 나와버렸는데, 그 inode를 가지고
+			// inode_is_directory를 실행하려니까 오류가 걸린 것이다.
+			// 따라서, 뒤에서 한 번에 if를 돌려주는게 아니라
+			// inode_is_directory 함수 자체가 오류가 나 버리니,
+			// 여기서 바로 dir = NULL을 해줘야 한다
+			// printf("(symlink) success_lookup이 false\n");
+			dir_close(real_dir);
+			real_dir = NULL;
+			break;
+		}
+
+		// 링크 파일인 경우는 앞서서 한 번 더 돌리면 될 것 같음
+		if (check_symlink(inode)) {
+			// printf("(symlink)의 check_symlink\n");
+			// 아니 대체 왜 inode->data.symlink가 안되는건데 ㅋㅋ
+			// inode의 path를 복사해온다!
+			char *inode_path = (char*)malloc((length_symlink_path(inode))*sizeof(char));
+			strlcpy(inode_path, inode_data_symlink_path(inode), length_symlink_path(inode));
+			
+			// inode path 경로에 symlink 뒷부분을 갖다붙이면 됨
+			// ../file 이런 식으로 되어있던 걸 inode path/file 이런 형식으로!
+			strlcat(inode_path, "/", strlen(inode_path) + 2);
+			// strlcat(inode_path, save, strlen(inode_path) + strlen(save) + 1);
+			strlcat(inode_path, next_path, strlen(inode_path) + strlen(next_path) + 1); // 이걸로 바꿔줘야...ㅜㅜ
+
+			dir_close(real_dir);
+			
+			// 그리고 while문 다시 시작해야함!
+			real_dir = dir_open_root();
+			if (linkpath[0] != '/') {
+				real_dir = dir_reopen(thread_current()->current_dir);
+			}
+			strlcpy(copy_linkpath, inode_path, strlen(inode_path) + 1);
+			free(inode_path);
+			linkpath_token = strtok_r(copy_linkpath, "/", &save);
+			continue;
+		}
+
+
+		bool is_inode_dir = inode_is_directory(inode);
+		if (!(success_lookup && is_inode_dir)) {
+			// printf("(symlink) is_inode_dir이 false인 경우\n");
+			dir_close(real_dir);
+			//inode_close(inode);
+			real_dir = NULL;
+			break;
+		// /*
+		} else {
+			// printf("(symlink) 에러가 다 아닌 경우...\n");
+			/*
+			// 링크 파일인 경우는 앞서서 한 번 더 돌리면 될 것 같음
+			if (check_symlink(inode)) {
+				// printf("(symlink)의 check_symlink\n");
+				// 아니 대체 왜 inode->data.symlink가 안되는건데 ㅋㅋ
+				// inode의 path를 복사해온다!
+				char *inode_path = (char*)malloc((length_symlink_path(inode))*sizeof(char));
+				strlcpy(inode_path, inode_data_symlink_path(inode), length_symlink_path(inode));
+				
+				// inode path 경로에 symlink 뒷부분을 갖다붙이면 됨
+				// ../file 이런 식으로 되어있던 걸 inode path/file 이런 형식으로!
+				strlcat(inode_path, "/", strlen(inode_path) + 2);
+				// strlcat(inode_path, save, strlen(inode_path) + strlen(save) + 1);
+				strlcat(inode_path, next_path, strlen(inode_path) + strlen(next_path) + 1); // 이걸로 바꿔줘야...ㅜㅜ
+
+				dir_close(real_dir);
+				
+				// 그리고 while문 다시 시작해야함!
+				real_dir = dir_open_root();
+				if (linkpath[0] != '/') {
+					real_dir = dir_reopen(thread_current()->current_dir);
+				}
+				strlcpy(copy_linkpath, inode_path, strlen(inode_path) + 1);
+				free(inode_path);
+				linkpath_token = strtok_r(copy_linkpath, "/", &save);
+				continue;
+			}
+			*/
+
+			dir_close(real_dir);
+			real_dir = dir_open(inode);
+			// 근데 여기서, 경로의 마지막은 file의 이름이므로 그걸 저장해야함
+			// char *check_next = strtok_r(NULL, "/", &save);
+			// if (check_next == NULL) {
+			if (next_path == NULL) {
+				// file_name에 file name 복사해두기!
+				// strlcpy(file_name, linkpath_token, strlen(linkpath_token) + 1);
+				break;
+			} else {
+				/*
+				linkpath_token = file_name;
+				*/
+				linkpath_token = next_path;
+				next_path = strtok_r(NULL, "/", &save);
+			}
+	// */
+		}
+	}
+
+	strlcpy(file_name, linkpath_token, strlen(linkpath_token) + 1);
+
+	// printf("(symlink) file_name: %s\n", file_name);
+	// 새로운 chain을 만들어서 inode sector 번호를 받아야 함
+	cluster_t inode_sector_num = fat_create_chain(0);
+
+	// dir이 NULL이면 당연히 error
+	if (real_dir == NULL) { goto error; }
+	
+	// inode를 만들어야 함
+	bool make_inode = inode_create(cluster_to_sector(inode_sector_num), 0, false);
+	if (!make_inode) { goto error; }
+
+	/*
+	bool create_dir = dir_create(cluster_to_sector(inode_sector_num), 0);
+	if (!create_dir) { goto error; }
+	*/
+
+	// dir에 file_name entry를 추가해줘야 함. 잘 안되면 당연히 goto error
+	bool add_file_name = dir_add(real_dir, file_name, cluster_to_sector(inode_sector_num));
+	if (!add_file_name) { goto error; }
+
+	// 이렇게 만들어진 sector에 위에서 받은 file_name의 dir을 만들어야 함. 안 만들어지면 당연히 error
+	bool link_inode = create_link_inode(cluster_to_sector(inode_sector_num), copy_target);
+	if (!link_inode) { goto error; }
+
+	dir_close(real_dir);
+	free(copy_target);
+	free(copy_linkpath);
+	free(file_name);
+
+	// printf("(symlink) 성공했어?\n");
+
+	return 0; // 성공하면 0 반환
+error:
+	if (inode_sector_num != 0) {
+		fat_remove_chain(inode_sector_num, 0);
+	}
+	dir_close(real_dir);
+	free(copy_target);
+	free(copy_linkpath);
+	free(file_name);
+
+	return -1; // 실패하면 -1 반환
 }

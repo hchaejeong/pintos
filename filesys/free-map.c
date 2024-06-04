@@ -11,6 +11,7 @@ static struct bitmap *free_map;      /* Free map, one bit per disk sector. */
 /* Initializes the free map. */
 void
 free_map_init (void) {
+	//printf("free map init은 안해?\n");
 	free_map = bitmap_create (disk_size (filesys_disk));
 	if (free_map == NULL)
 		PANIC ("bitmap creation failed--disk is too large");
@@ -65,7 +66,7 @@ free_map_close (void) {
 void
 free_map_create (void) {
 	/* Create inode. */
-	if (!inode_create (FREE_MAP_SECTOR, bitmap_file_size (free_map)))
+	if (!inode_create (FREE_MAP_SECTOR, bitmap_file_size (free_map), false))
 		PANIC ("free map creation failed");
 
 	/* Write bitmap to file. */
