@@ -212,13 +212,16 @@ dir_remove (struct dir *dir, const char *name) {
 		//off_t curr_dir_pos = curr_dir->pos;
 		//NOT_REACHED();
 		while (true) {
-			bool not_all_entry = inode_read_at(inode, &temp, dir_entry_size, curr_dir->pos) < dir_entry_size;
+			// bool not_all_entry = inode_read_at(inode, &temp, dir_entry_size, curr_dir->pos) < dir_entry_size;
+			bool not_all_entry = inode_read_at(curr_dir->inode, &temp, dir_entry_size, curr_dir->pos) < dir_entry_size;
 			//이 directory의 마지막 directory entry까지 검사하는거기 때문에 엔트리 하나 보다 작은 사이즈만 읽을 수 있으면
 			//마지막 엔트리에 도달한거다
 			if (not_all_entry) {
 				//NOT_REACHED();
 				break;
 			}
+			
+			// printf("(dir_remove) temp.in_use: %d, temp.name: %s\n", temp.in_use, temp.name);
 			
 			//이제 temp에 현재 찾은 directory의 dir entry를 하나하나씩 읽고 넣어준다
 			//만약 지금 directory안에 entry가 사용되고 있는거면 . 또는 .. 아니면 안된다
@@ -233,6 +236,8 @@ dir_remove (struct dir *dir, const char *name) {
 					//printf("compare with .. is %d", parent_dir);
 					//NOT_REACHED();
 					//"." 또는 ".."이 둘 다 아닌데 사용되고 있는게 있는 상황이니까 제거하면 안된다
+					// printf("(dir_remove) temp.name: %s\n", temp.name);
+					// printf("(dir_remove) . or .. 이외가 있어서 fail\n");
 					dir_close(curr_dir);
 					return false;
 				}
@@ -246,6 +251,7 @@ dir_remove (struct dir *dir, const char *name) {
 			struct inode *process_inode = dir_get_inode(process_dir);
 			if (process_inode == inode) {
 				//현재 사용되고 있는 inode가 같은 디렉토리의 Inode일때는 이 디렉토리를 제거하면 안된다
+				// printf("(dir_remove) process_inode == inode여서 fail\n");
 				dir_close(curr_dir);
 				return false;
 			}
@@ -254,6 +260,7 @@ dir_remove (struct dir *dir, const char *name) {
 		//만약 이 디렉토리가 두군데 이상 사용되고 있으면 이 디렉토리는 제거할 수 없다
 		if (get_open_count(inode) > 2) {
 			//NOT_REACHED();
+			// printf("(dir_remove) get_open_count > 2라서 fail\n");
 			dir_close(curr_dir);
 			return false;
 		}
